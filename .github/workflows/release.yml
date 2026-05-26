@@ -12,6 +12,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [win-x64, win-x86]
 
     steps:
       - name: Checkout
@@ -40,27 +43,25 @@ jobs:
           node-version: '22'
 
       - name: Restore WPF project
-        run: dotnet restore src/Snet.CopilotProxy/Snet.CopilotProxy.csproj
+        run: dotnet restore src/Snet.CopilotProxy/Snet.CopilotProxy.csproj -r ${{ matrix.arch }}
 
-      - name: Build WPF (Release)
+      - name: Build WPF (${{ matrix.arch }})
         run: |
           dotnet publish src/Snet.CopilotProxy/Snet.CopilotProxy.csproj `
             -c Release `
-            -r win-x64 `
+            -r ${{ matrix.arch }} `
             --self-contained true `
             -p:Version=${{ steps.version.outputs.VERSION }} `
-            -p:PublishSingleFile=true `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -o publish/app
+            -o publish/${{ matrix.arch }}
 
       - name: Install script dependencies
         working-directory: src/Snet.CopilotProxy/script
         run: npm install --production --no-bin-links
 
-      - name: Copy script to publish
+      - name: Copy script to publish (${{ matrix.arch }})
         shell: pwsh
         run: |
-          $dst = "publish/app/script"
+          $dst = "publish/${{ matrix.arch }}/script"
           New-Item -ItemType Directory -Force -Path "$dst/src"
           Copy-Item -Recurse src/Snet.CopilotProxy/script/src/*        "$dst/src/"
           Copy-Item -Recurse src/Snet.CopilotProxy/script/node_modules "$dst/" -ErrorAction SilentlyContinue
@@ -70,17 +71,46 @@ jobs:
           Copy-Item src/Snet.CopilotProxy/script/build-bun.cmd "$dst/"
           Copy-Item src/Snet.CopilotProxy/script/build-node.cmd "$dst/"
           Copy-Item src/Snet.CopilotProxy/script/bunfig.toml  "$dst/" -ErrorAction SilentlyContinue
-          Write-Host "Script files copied to $dst"
 
-      - name: Create ZIP archive
+      - name: Create ZIP (${{ matrix.arch }})
         shell: pwsh
         run: |
-          Compress-Archive -Path publish/app/* -DestinationPath "publish/CopilotProxy-v${{ steps.version.outputs.VERSION }}.zip"
-          Write-Host "ZIP created"
+          Compress-Archive -Path publish/${{ matrix.arch }}/* -DestinationPath "publish/CopilotProxy-v${{ steps.version.outputs.VERSION }}-${{ matrix.arch }}.zip"
+
+      - name: Upload artifact (${{ matrix.arch }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: CopilotProxy-${{ matrix.arch }}
+          path: publish/CopilotProxy-v${{ steps.version.outputs.VERSION }}-${{ matrix.arch }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VER=$(grep -oP '<Version>\K[^<]+' src/Snet.CopilotProxy/Snet.CopilotProxy.csproj | head -1)
+          echo "VERSION=$VER" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: CopilotProxy-*
+          path: publish
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la publish/
 
       - name: Create tag (workflow_dispatch only)
         if: github.event_name == 'workflow_dispatch'
-        shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -92,7 +122,7 @@ jobs:
         with:
           name: "v${{ steps.version.outputs.VERSION }}"
           tag_name: "v${{ steps.version.outputs.VERSION }}"
-          files: publish/CopilotProxy-v${{ steps.version.outputs.VERSION }}.zip
+          files: publish/*.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
