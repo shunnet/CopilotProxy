@@ -50,7 +50,7 @@ jobs:
           dotnet publish src/Snet.CopilotProxy/Snet.CopilotProxy.csproj `
             -c Release `
             -r ${{ matrix.arch }} `
-            --self-contained true `
+            --self-contained false `
             -p:Version=${{ steps.version.outputs.VERSION }} `
             -o publish/${{ matrix.arch }}
 

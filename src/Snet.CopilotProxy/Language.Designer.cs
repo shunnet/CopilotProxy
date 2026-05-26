@@ -304,6 +304,15 @@ namespace Snet.CopilotProxy {
         }
         
         /// <summary>
+        ///   查找类似 关闭 的本地化字符串。
+        /// </summary>
+        internal static string 关闭 {
+            get {
+                return ResourceManager.GetString("关闭", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   查找类似 启动 的本地化字符串。
         /// </summary>
         internal static string 启动 {
@@ -327,6 +336,15 @@ namespace Snet.CopilotProxy {
         internal static string 支持_Visual_Studio2026_与_Visual_Studio_Code {
             get {
                 return ResourceManager.GetString("支持 Visual Studio2026 与 Visual Studio Code", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   查找类似 显示窗口 的本地化字符串。
+        /// </summary>
+        internal static string 显示窗口 {
+            get {
+                return ResourceManager.GetString("显示窗口", resourceCulture);
             }
         }
         

@@ -9,9 +9,10 @@
 		<ApplicationIcon>icon.ico</ApplicationIcon>
 		<Company>Shunnet.top</Company>
 		<Product>CopilotProxy</Product>
-		<Version>1.0.0.1</Version>
+		<Version>1.0.0.2</Version>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
 	</PropertyGroup>
 	<ItemGroup>
 		<None Include="..\..\README.md" Pack="true" PackagePath="\" />

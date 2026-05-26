@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Snet.CopilotProxy.handler;
 using Snet.Core.handler;
 using Snet.Log;
 using Snet.Model.data;
@@ -18,6 +19,13 @@ namespace Snet.CopilotProxy
     {
 
         #region 静态路径与资源
+
+        /// <summary>
+        /// 单实例管理器实例
+        /// 需要在整个应用程序生命周期内保持存活
+        /// （持有 Mutex 的所有权，释放后其他实例就能成为首实例）
+        /// </summary>
+        private SingleInstanceHandle _singleInstance;
 
         /// <summary>
         /// 脚本目录路径（相对于应用程序基目录的 script 子目录）
@@ -89,6 +97,7 @@ namespace Snet.CopilotProxy
         /// </summary>
         private async void OnExit(object sender, ExitEventArgs e)
         {
+            _singleInstance?.Dispose();
             await StopServiceAsync();
             InjectionWpf.ClearService();
         }
@@ -98,6 +107,9 @@ namespace Snet.CopilotProxy
         /// </summary>
         private async void OnStartup(object sender, StartupEventArgs e)
         {
+            //判断是不是唯一打开
+            SingleInstance(e);
+
             // 尝试优雅关闭可能残留的旧代理服务（上次异常退出遗留）
             await StopStaleServiceAsync();
 
@@ -112,8 +124,39 @@ namespace Snet.CopilotProxy
             // 注册全局未处理异常事件
             RegisterEvents();
 
-            // 打开主窗口，绑定 MainWindowModel 作为 ViewModel
-            InjectionWpf.Window<MainWindow, MainWindowModel>(true).Show();
+            // 打开主窗口
+            MainWindow window = InjectionWpf.Window<MainWindow, MainWindowModel>(true);
+            window.Show();
+
+            // Show() 之后窗口的 HWND 才真正创建
+            // 此时立即缓存句柄，后续即使窗口 Hide 到托盘也能唤醒
+            _singleInstance.RegisterMainWindow(window);
+        }
+
+        /// <summary>
+        /// 唯一实例处理流程
+        /// </summary>
+        /// <param name="e"></param>
+        private void SingleInstance(StartupEventArgs e)
+        {
+            _singleInstance = new SingleInstanceHandle("Snet.CopilotProxy", out bool isFirst);      // 输出：是否是首实例
+
+            if (!isFirst)
+            {
+                _singleInstance.SignalFirstInstance(e.Args);
+                _singleInstance.Dispose();
+                Shutdown(0);
+                return;
+            }
+            _singleInstance.SignalReceived += OnWakeup;
+        }
+
+        /// <summary>
+        /// 被新实例唤醒时的回调
+        /// </summary>
+        private void OnWakeup(string[] args)
+        {
+            _singleInstance.BringToFront();
         }
 
         #endregion

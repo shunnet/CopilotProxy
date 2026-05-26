@@ -2,7 +2,10 @@
 using Snet.Utility;
 using Snet.Windows.Controls.handler;
 using Snet.Windows.Core;
+using System.ComponentModel;
+using System.Windows;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace Snet.CopilotProxy
 {
@@ -16,6 +19,11 @@ namespace Snet.CopilotProxy
             InitializeComponent();
             _ = new EditHandler(edit, App.EditModels, color: ("#414141", "#FFFFFF"));
         }
+
+        /// <summary>
+        /// 标记是否为强制关闭（由托盘"关闭"命令触发），为 true 时不拦截关闭事件
+        /// </summary>
+        public bool IsForceClose { get; set; }
 
         /// <summary>
         /// 拦截文本输入，防止用户手动编辑日志内容
@@ -45,6 +53,42 @@ namespace Snet.CopilotProxy
             text.SelectionStart = text.Text.Length;
             text.SelectionLength = 0;
             text.ScrollToEnd();
+        }
+
+        /// <summary>
+        /// 托盘图标左键点击事件：安全恢复窗口
+        /// </summary>
+        private void TrayIcon_LeftClick(Windows.Controls.tray.Controls.NotifyIcon sender, RoutedEventArgs e)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                ShowInTaskbar = true;
+
+                if (!IsVisible)
+                    Show();
+
+                if (WindowState == WindowState.Minimized)
+                    WindowState = WindowState.Normal;
+
+                Focus();
+
+            }, DispatcherPriority.ApplicationIdle);
+        }
+
+        /// <summary>
+        /// 重写窗口关闭行为：非强制关闭时，将窗口隐藏到系统托盘而非真正关闭
+        /// </summary>
+        /// <param name="e">关闭事件参数，可通过 Cancel 属性取消关闭</param>
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            if (!IsForceClose)
+            {
+                e.Cancel = true;
+                Hide();
+                ShowInTaskbar = false;
+                return;
+            }
+            base.OnClosing(e);
         }
     }
 }

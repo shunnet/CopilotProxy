@@ -18,6 +18,8 @@
     snet:ResxLocalizationProvider.DefaultAssembly="Snet.CopilotProxy"
     snet:ResxLocalizationProvider.DefaultDictionary="Language"
     Icon="/icon.ico"
+    LoadAnimationEnabled="true"
+    WindowStartupLocation="CenterScreen"
     mc:Ignorable="d">
     <GroupBox
         Margin="10"
@@ -207,7 +209,44 @@
                     <Style BasedOn="{StaticResource UiScrollBar}" TargetType="ScrollBar" />
                 </edit:TextEditor.Resources>
             </edit:TextEditor>
-        </Grid>
 
+            <!--  托盘  -->
+            <snet:NotifyIcon
+                x:Name="TrayIcon"
+                FocusOnLeftClick="True"
+                Icon="/icon.ico"
+                LeftClick="TrayIcon_LeftClick"
+                MenuOnRightClick="True"
+                TooltipText="{snet:Loc SystemTitle}">
+                <snet:NotifyIcon.Menu>
+                    <ContextMenu x:Name="TrayContextMenu" Style="{StaticResource UiContextMenu}">
+                        <uis:MenuItem
+                            Command="{Binding Start}"
+                            Header="{snet:Loc 启动}"
+                            Icon="{uis:SymbolIcon Symbol=Window20}"
+                            IsEnabled="{Binding StartIsEnabled}" />
+                        <uis:MenuItem
+                            Command="{Binding Stop}"
+                            Header="{snet:Loc 停止}"
+                            Icon="{uis:SymbolIcon Symbol=Window20}"
+                            IsEnabled="{Binding StopIsEnabled}" />
+                        <uis:MenuItem
+                            Command="{Binding Restart}"
+                            Header="{snet:Loc 重启}"
+                            Icon="{uis:SymbolIcon Symbol=Window20}"
+                            IsEnabled="{Binding RestartIsEnabled}" />
+                        <Separator x:Name="TrayDeviceSeparator" Margin="0,3" />
+                        <uis:MenuItem
+                            Command="{Binding ShowWindow}"
+                            Header="{snet:Loc 显示窗口}"
+                            Icon="{uis:SymbolIcon Symbol=Window20}" />
+                        <uis:MenuItem
+                            Command="{Binding Close}"
+                            Header="{snet:Loc 关闭}"
+                            Icon="{uis:SymbolIcon Symbol=Dismiss24}" />
+                    </ContextMenu>
+                </snet:NotifyIcon.Menu>
+            </snet:NotifyIcon>
+        </Grid>
     </GroupBox>
 </snet:WindowBase>

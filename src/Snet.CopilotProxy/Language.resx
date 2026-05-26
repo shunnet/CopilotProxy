@@ -160,4 +160,10 @@
   <data name="Error_ReadStreamFailed" xml:space="preserve">
     <value>[ Error ] 读取输出流失败: {0}</value>
   </data>
+  <data name="显示窗口" xml:space="preserve">
+    <value>显示窗口</value>
+  </data>
+  <data name="关闭" xml:space="preserve">
+    <value>关闭</value>
+  </data>
 </root>

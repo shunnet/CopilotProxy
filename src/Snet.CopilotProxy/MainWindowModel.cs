@@ -11,6 +11,7 @@ using Snet.Windows.Core.mvvm;
 using System.IO;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Windows;
 
 namespace Snet.CopilotProxy
 {
@@ -430,6 +431,75 @@ namespace Snet.CopilotProxy
             }
         }
 
+        #endregion
+
+        #region 托盘操作
+        /// <summary>
+        /// 显示主窗口命令，从系统托盘恢复窗口显示
+        /// </summary>
+        public IAsyncRelayCommand ShowWindow => p_ShowWindow ??= new AsyncRelayCommand(ShowWindowAsync);
+        private IAsyncRelayCommand p_ShowWindow;
+
+        /// <summary>
+        /// 安全显示主窗口
+        /// </summary>
+        private Task ShowWindowAsync()
+        {
+            var window = Application.Current.MainWindow;
+            if (window == null)
+                return Task.CompletedTask;
+
+            window.Dispatcher.BeginInvoke(() =>
+            {
+                try
+                {
+                    // 🔥 1. 如果窗口隐藏（托盘）
+                    if (!window.IsVisible)
+                    {
+                        window.ShowInTaskbar = true;
+                        window.Show();
+                    }
+
+                    // 🔥 2. 如果最小化，恢复
+                    if (window.WindowState == WindowState.Minimized)
+                    {
+                        window.WindowState = WindowState.Normal;
+                    }
+
+                    // 🔥 3. 用 Focus 替代 Activate（关键！）
+                    window.Focus();
+
+                }
+                catch (Exception ex)
+                {
+                    LogHelper.Error($"[ShowWindowAsync] 异常: {ex.Message}");
+                }
+
+            }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// 关闭应用程序命令（从托盘菜单调用，真正退出程序）
+        /// </summary>
+        public IAsyncRelayCommand Close => p_Close ??= new AsyncRelayCommand(CloseAsync);
+        private IAsyncRelayCommand p_Close;
+
+        /// <summary>
+        /// 关闭应用程序，设置强制关闭标志后执行退出
+        /// </summary>
+        /// <returns>已完成的任务</returns>
+        private Task CloseAsync()
+        {
+            // 设置强制关闭标志，避免 OnClosing 拦截
+            if (Application.Current.MainWindow is MainWindow mainWindow)
+            {
+                mainWindow.IsForceClose = true;
+            }
+            Application.Current.Shutdown();
+            return Task.CompletedTask;
+        }
         #endregion
     }
 }
