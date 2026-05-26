@@ -238,6 +238,28 @@ C# 管理工具启动脚本时自动传入 `--plain` 参数与 `SNET_PLAIN=1` �
 | `build-bun.cmd` | 编译为单文件 `.exe`（需要 Bun） |
 | `build-node.cmd` | 可移植文件夹（需要 Node.js） |
 
+## 📸 界面截图
+
+<p align="center">
+  <img src="image/1.png" alt="主界面" width="45%"/>
+  <img src="image/2.png" alt="设置" width="45%"/>
+</p>
+<p align="center">
+  <img src="image/3.png" alt="构建" width="45%"/>
+  <img src="image/4.png" alt="启动服务" width="45%"/>
+</p>
+<p align="center">
+  <img src="image/5.png" alt="VS Code 配置" width="45%"/>
+  <img src="image/6.png" alt="模型列表" width="45%"/>
+</p>
+<p align="center">
+  <img src="image/7.png" alt="Copilot Chat" width="45%"/>
+  <img src="image/8.png" alt="终端输出" width="45%"/>
+</p>
+<p align="center">
+  <img src="image/9.png" alt="完整工作流" width="80%"/>
+</p>
+
 ## 🙏 致谢
 
 - [Hono](https://hono.dev) — 轻量 HTTP 框架
