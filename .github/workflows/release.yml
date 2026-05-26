@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from .csproj
+        id: version
+        shell: bash
+        run: |
+          VER=$(grep -oP '<Version>\K[^<]+' src/Snet.CopilotProxy/Snet.CopilotProxy.csproj | head -1)
+          echo "VERSION=$VER" >> $GITHUB_OUTPUT
+          echo "Version: $VER"
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore WPF project
+        run: dotnet restore src/Snet.CopilotProxy/Snet.CopilotProxy.csproj
+
+      - name: Build WPF (Release)
+        run: dotnet publish src/Snet.CopilotProxy/Snet.CopilotProxy.csproj -c Release -r win-x64 --self-contained false -p:Version=${{ steps.version.outputs.VERSION }} -o publish/Snet.CopilotProxy
+
+      - name: Install script dependencies
+        working-directory: src/Snet.CopilotProxy/script
+        run: npm install --production --no-bin-links
+
+      - name: Copy script to publish
+        shell: bash
+        run: |
+          mkdir -p publish/Snet.CopilotProxy/script
+          cp -r src/Snet.CopilotProxy/script/src        publish/Snet.CopilotProxy/script/
+          cp -r src/Snet.CopilotProxy/script/node_modules publish/Snet.CopilotProxy/script/ 2>/dev/null || true
+          cp    src/Snet.CopilotProxy/script/package.json publish/Snet.CopilotProxy/script/
+          cp    src/Snet.CopilotProxy/script/start.cmd    publish/Snet.CopilotProxy/script/
+          cp    src/Snet.CopilotProxy/script/build.cmd    publish/Snet.CopilotProxy/script/
+          cp    src/Snet.CopilotProxy/script/bunfig.toml  publish/Snet.CopilotProxy/script/ 2>/dev/null || true
+
+      - name: Create ZIP archive
+        shell: bash
+        run: |
+          cd publish
+          7z a -tzip "../CopilotProxy-v${{ steps.version.outputs.VERSION }}.zip" Snet.CopilotProxy/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "v${{ steps.version.outputs.VERSION }}"
+          tag_name: ${{ github.ref_name }}
+          files: publish/CopilotProxy-v${{ steps.version.outputs.VERSION }}.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

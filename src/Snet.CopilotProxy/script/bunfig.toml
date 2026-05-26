@@ -1,0 +1,17 @@
+# ── Bun Performance Configuration ──
+
+[run]
+# Reduced memory mode — runs GC more aggressively, ideal for long-running proxy servers
+smol = true
+
+[install]
+# Use hard links instead of copying (faster installs on same volume)
+hardlink = true
+# Save exact versions
+save = true
+# Auto-install peer deps
+auto = true
+
+[serve]
+# Default idle timeout in seconds (overridden per-server in code)
+idle_timeout = 120

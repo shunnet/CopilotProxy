@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="SystemTitle" xml:space="preserve">
+    <value>[ Shunnet.top ] Copilot Model Proxy Tool</value>
+  </data>
+  <data name="支持 Visual Studio2026 与 Visual Studio Code" xml:space="preserve">
+    <value>Supports Visual Studio 2026 and Visual Studio Code</value>
+  </data>
+  <data name="清空" xml:space="preserve">
+    <value>Clear</value>
+  </data>
+  <data name="构建" xml:space="preserve">
+    <value>Build</value>
+  </data>
+  <data name="设置" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="启动" xml:space="preserve">
+    <value>Start</value>
+  </data>
+  <data name="停止" xml:space="preserve">
+    <value>Stop</value>
+  </data>
+  <data name="重启" xml:space="preserve">
+    <value>Restart</value>
+  </data>
+  <data name="操作" xml:space="preserve">
+    <value>Operations</value>
+  </data>
+  <data name="Welcome" xml:space="preserve">
+    <value>Welcome to [ Shunnet.top ] Copilot Model Proxy Tool</value>
+  </data>
+  <data name="Error_InitFailed" xml:space="preserve">
+    <value>[ Error ] Initialization failed: {0}</value>
+  </data>
+  <data name="Info_NodeJs" xml:space="preserve">
+    <value>[ Info ] Node.js {0}</value>
+  </data>
+  <data name="Error_NodeJsNotFound" xml:space="preserve">
+    <value>[ Error ] Node.js not detected. Please download and install from https://nodejs.org/en/download and restart the application</value>
+  </data>
+  <data name="Error_BuildScriptNotFound" xml:space="preserve">
+    <value>[ Error ] Build script not found. Please configure the environment first</value>
+  </data>
+  <data name="Info_BuildStarting" xml:space="preserve">
+    <value>[ Info ] Starting build...</value>
+  </data>
+  <data name="Info_BuildCompleted" xml:space="preserve">
+    <value>[ Info ] Build completed</value>
+  </data>
+  <data name="Error_BuildFailed" xml:space="preserve">
+    <value>[ Error ] Build failed, exit code: {0}</value>
+  </data>
+  <data name="Info_DistNoConfig" xml:space="preserve">
+    <value>[ Info ] No config file in .dist, creating default...</value>
+  </data>
+  <data name="Info_ConfigSynced" xml:space="preserve">
+    <value>[ Info ] Configuration synced to .dist</value>
+  </data>
+  <data name="Info_ConfigSavedRestarting" xml:space="preserve">
+    <value>[ Info ] Configuration saved, restarting service to apply...</value>
+  </data>
+  <data name="Error_StartScriptNotFound" xml:space="preserve">
+    <value>[ Error ] Start script not found. Please build first</value>
+  </data>
+  <data name="Info_ServiceStarting" xml:space="preserve">
+    <value>[ Info ] Starting service...</value>
+  </data>
+  <data name="Info_ServiceStopping" xml:space="preserve">
+    <value>[ Info ] Stopping service...</value>
+  </data>
+  <data name="Info_ServiceStopped" xml:space="preserve">
+    <value>[ Info ] Service stopped</value>
+  </data>
+  <data name="Info_ProcessTerminated" xml:space="preserve">
+    <value>[ Info ] Service process terminated</value>
+  </data>
+  <data name="Error_StopFailedManual" xml:space="preserve">
+    <value>[ Error ] Stop failed. Please close manually</value>
+  </data>
+  <data name="Error_StopFailed" xml:space="preserve">
+    <value>[ Error ] Stop failed: {0}</value>
+  </data>
+  <data name="Info_ServiceRestarting" xml:space="preserve">
+    <value>[ Info ] Restarting service...</value>
+  </data>
+  <data name="GlobalException" xml:space="preserve">
+    <value>Global Exception</value>
+  </data>
+  <data name="UnknownException" xml:space="preserve">
+    <value>Unknown exception</value>
+  </data>
+  <data name="Error_StopStaleServiceFailed" xml:space="preserve">
+    <value>[ Error ] Failed to clean up residual service on startup: {0}</value>
+  </data>
+  <data name="Error_StopServiceFailed" xml:space="preserve">
+    <value>[ Error ] Failed to stop proxy service: {0}</value>
+  </data>
+  <data name="Error_ScriptNotFound" xml:space="preserve">
+    <value>[ Error ] Script file not found: {0}</value>
+  </data>
+  <data name="Error_ReadStreamFailed" xml:space="preserve">
+    <value>[ Error ] Failed to read output stream: {0}</value>
+  </data>
+</root>

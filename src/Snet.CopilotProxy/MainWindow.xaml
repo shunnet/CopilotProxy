@@ -1,0 +1,213 @@
+﻿<snet:WindowBase
+    x:Class="Snet.CopilotProxy.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:edit="http://icsharpcode.net/sharpdevelop/avalonedit"
+    xmlns:h="clr-namespace:Snet.Windows.Controls.handler;assembly=Snet.Windows.Controls"
+    xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
+    xmlns:local="clr-namespace:Snet.CopilotProxy"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:snet="https://shunnet.top"
+    xmlns:ui="http://materialdesigninxaml.net/winfx/xaml/themes"
+    xmlns:uis="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="{snet:Loc SystemTitle}"
+    Width="1000"
+    Height="700"
+    MinWidth="1000"
+    snet:ResxLocalizationProvider.DefaultAssembly="Snet.CopilotProxy"
+    snet:ResxLocalizationProvider.DefaultDictionary="Language"
+    Icon="/icon.ico"
+    mc:Ignorable="d">
+    <GroupBox
+        Margin="10"
+        Padding="0"
+        ui:ElevationAssist.Elevation="Dp4"
+        ui:GroupBoxAssist.HeaderPadding="7"
+        Style="{StaticResource MaterialDesignCardGroupBox}">
+        <GroupBox.HeaderTemplate>
+            <DataTemplate>
+                <StackPanel Orientation="Horizontal">
+                    <ui:PackIcon
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Kind="Rocket" />
+                    <TextBlock
+                        Margin="5,0,0,0"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Text="{snet:Loc 操作}"
+                        TextAlignment="Center" />
+                </StackPanel>
+            </DataTemplate>
+        </GroupBox.HeaderTemplate>
+        <Grid>
+            <!--  设置  -->
+            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                <Button
+                    Margin="0,-32,0,0"
+                    Padding="10,0,10,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    ui:ButtonAssist.CornerRadius="0"
+                    Command="{Binding Build}"
+                    IsEnabled="{Binding BuildIsEnabled}"
+                    Style="{StaticResource MaterialDesignFlatSecondaryButton}">
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                        <ui:PackIcon
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Kind="Build" />
+                        <TextBlock
+                            Margin="5,0,0,0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Text="{snet:Loc 构建}"
+                            TextAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    Margin="0,-32,0,0"
+                    Padding="10,0,10,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    ui:ButtonAssist.CornerRadius="0"
+                    Command="{Binding Settings}"
+                    IsEnabled="{Binding SettingsIsEnabled}"
+                    Style="{StaticResource MaterialDesignFlatSecondaryButton}">
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                        <ui:PackIcon
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Kind="Settings" />
+                        <TextBlock
+                            Margin="5,0,0,0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Text="{snet:Loc 设置}"
+                            TextAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    Margin="0,-32,0,0"
+                    Padding="10,0,10,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    ui:ButtonAssist.CornerRadius="0"
+                    Command="{Binding Start}"
+                    IsEnabled="{Binding StartIsEnabled}"
+                    Style="{StaticResource MaterialDesignFlatSecondaryButton}">
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                        <ui:PackIcon
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Kind="StarThreePointsOutline" />
+                        <TextBlock
+                            Margin="5,0,0,0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Text="{snet:Loc 启动}"
+                            TextAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    Margin="0,-32,0,0"
+                    Padding="10,0,10,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    ui:ButtonAssist.CornerRadius="0"
+                    Command="{Binding Stop}"
+                    IsEnabled="{Binding StopIsEnabled}"
+                    Style="{StaticResource MaterialDesignFlatSecondaryButton}">
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                        <ui:PackIcon
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Kind="Stop" />
+                        <TextBlock
+                            Margin="5,0,0,0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Text="{snet:Loc 停止}"
+                            TextAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    Margin="0,-32,0,0"
+                    Padding="10,0,10,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    ui:ButtonAssist.CornerRadius="0"
+                    Command="{Binding Restart}"
+                    IsEnabled="{Binding RestartIsEnabled}"
+                    Style="{StaticResource MaterialDesignFlatSecondaryButton}">
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                        <ui:PackIcon
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Kind="Restart" />
+                        <TextBlock
+                            Margin="5,0,0,0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Text="{snet:Loc 重启}"
+                            TextAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    Margin="0,-32,0,0"
+                    Padding="10,0,10,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    ui:ButtonAssist.CornerRadius="0,5,0,0"
+                    Command="{Binding Clear}"
+                    Style="{StaticResource MaterialDesignFlatSecondaryButton}">
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                        <ui:PackIcon
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Kind="Clear" />
+                        <TextBlock
+                            Margin="5,0,0,0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Text="{snet:Loc 清空}"
+                            TextAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+            <!--  日志  -->
+            <edit:TextEditor
+                x:Name="edit"
+                h:EditBindingHandler.EditText="{Binding Log}"
+                IsReadOnly="True"
+                PreviewKeyDown="TextEditor_PreviewKeyDown"
+                PreviewTextInput="TextEditor_PreviewTextInput"
+                TextChanged="TextEditor_TextChanged">
+                <edit:TextEditor.Resources>
+                    <Style BasedOn="{StaticResource UiScrollViewer}" TargetType="ScrollViewer" />
+                    <Style BasedOn="{StaticResource UiScrollBar}" TargetType="ScrollBar" />
+                </edit:TextEditor.Resources>
+            </edit:TextEditor>
+        </Grid>
+
+    </GroupBox>
+</snet:WindowBase>

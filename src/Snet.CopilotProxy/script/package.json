@@ -1,0 +1,21 @@
+{
+  "name": "snet",
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun --smol run src/server.js",
+    "start:prod": "bun --smol run src/server.js",
+    "start:node:prod": "node --expose-gc --max-old-space-size=4096 src/server.js",
+    "dev": "bun --watch --smol src/server.js",
+    "node": "node --expose-gc src/server.js"
+  },
+  "dependencies": {
+    "hono": "^4.12.18",
+    "undici": "^5.29.0",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.0.0"
+  }
+}
