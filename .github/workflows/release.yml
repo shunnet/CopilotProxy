@@ -109,13 +109,22 @@ jobs:
       - name: List artifacts
         run: ls -la publish/
 
-      - name: Create tag (workflow_dispatch only)
+      - name: Delete existing tag & release (workflow_dispatch only)
         if: github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 删除远程 tag
+          git push origin ":refs/tags/v${{ steps.version.outputs.VERSION }}" 2>/dev/null || echo "no remote tag to delete"
+          # 删除本地 tag（如果存在）
+          git tag -d "v${{ steps.version.outputs.VERSION }}" 2>/dev/null || echo "no local tag to delete"
+          # 删除已有的 GitHub Release
+          gh release delete "v${{ steps.version.outputs.VERSION }}" --yes 2>/dev/null || echo "no existing release to delete"
+          # 创建新 tag 并推送
           git tag -a "v${{ steps.version.outputs.VERSION }}" -m "Release v${{ steps.version.outputs.VERSION }}"
           git push origin "v${{ steps.version.outputs.VERSION }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
