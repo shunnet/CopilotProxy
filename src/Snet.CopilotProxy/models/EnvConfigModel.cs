@@ -19,10 +19,9 @@ public class EnvConfigModel
     public int ServerPort { get; set; } = 11434;
 
     /// <summary>
-    /// 默认模型标识符，当客户端未指定模型时使用
+    /// 默认模型，客户端未指定时使用
     /// </summary>
     [Description("默认模型")]
-    [Required(AllowEmptyStrings = false, ErrorMessage = "默认模型不能为空")]
     public string DefaultModel { get; set; } = "ds/deepseek-v4-pro";
 
     #endregion
@@ -111,6 +110,40 @@ public class EnvConfigModel
     [Range(0, 100, ErrorMessage = "重试次数必须在 0-100 之间")]
     public int RetryMax { get; set; } = 3;
 
+    /// <summary>
+    /// 重试延迟基准（毫秒），默认 100
+    /// </summary>
+    [Description("重试基础延迟，毫秒")]
+    [Range(50, 60000, ErrorMessage = "延迟必须在 50-60000ms 之间")]
+    public int RetryBaseDelayMs { get; set; } = 100;
+
+    /// <summary>
+    /// 是否截断过长的工具输出，默认开启
+    /// </summary>
+    [Description("截断过长工具输出（默认 true）")]
+    public bool TruncateToolOutput { get; set; } = true;
+
+    /// <summary>
+    /// 推理模型（Thinking）请求超时（毫秒），默认 120000（2 分钟）
+    /// </summary>
+    [Description("推理模型超时，毫秒（默认 120000）")]
+    [Range(10000, int.MaxValue, ErrorMessage = "超时必须 >= 10000ms")]
+    public int ThinkingTimeoutMs { get; set; } = 120000;
+
+    /// <summary>
+    /// 标准模型请求超时（毫秒），默认 120000（2 分钟）
+    /// </summary>
+    [Description("标准模型超时，毫秒（默认 120000）")]
+    [Range(10000, int.MaxValue, ErrorMessage = "超时必须 >= 10000ms")]
+    public int RequestTimeoutMs { get; set; } = 120000;
+
+    /// <summary>
+    /// 最大请求体字节数，默认 67108864（64MB）
+    /// </summary>
+    [Description("最大请求体，字节（默认 64MB）")]
+    [Range(262144, int.MaxValue, ErrorMessage = "请求体必须 >= 256KB")]
+    public int MaxRequestBodyBytes { get; set; } = 67108864;
+
     #endregion
 
     #region 模型元数据
@@ -128,6 +161,13 @@ public class EnvConfigModel
     [Range(1024, int.MaxValue, ErrorMessage = "上下文长度必须 >= 1024")]
     public int DefaultContextLength { get; set; } = 131072;
 
+    /// <summary>
+    /// 默认模型温度（0-2），留空表示不设置，由 API 自行决定
+    /// </summary>
+    [Description("默认温度，留空为不设置")]
+    [Range(0, 2, ErrorMessage = "温度必须在 0-2 之间")]
+    public double? DefaultTemperature { get; set; } = 1.25;
+
     #endregion
 
     #region 会话保活配置
@@ -140,11 +180,25 @@ public class EnvConfigModel
     public bool SessionKeepaliveEnabled { get; set; } = true;
 
     /// <summary>
+    /// 保活 Ping 间隔（毫秒），默认 120000（2 分钟）
+    /// </summary>
+    [Description("保活间隔，毫秒（默认 120000）")]
+    [Range(30000, int.MaxValue, ErrorMessage = "间隔必须 >= 30000ms")]
+    public int SessionKeepaliveIntervalMs { get; set; } = 120000;
+
+    /// <summary>
     /// 保活最大空闲时间（毫秒），超过此时间无请求则停止 Ping
     /// </summary>
     [Description("保活最大空闲时间，毫秒")]
     [Range(1000, int.MaxValue, ErrorMessage = "保活空闲时间必须 >= 1000ms")]
     public int SessionKeepaliveIdleTimeoutMs { get; set; } = 600000;
+
+    /// <summary>
+    /// 保活最大生命周期（毫秒），默认 86400000（24 小时）
+    /// </summary>
+    [Description("保活最大生命周期，毫秒（默认 24h）")]
+    [Range(3600000, int.MaxValue, ErrorMessage = "生命周期必须 >= 1h")]
+    public int SessionKeepaliveMaxLifetimeMs { get; set; } = 86400000;
 
     #endregion
 }

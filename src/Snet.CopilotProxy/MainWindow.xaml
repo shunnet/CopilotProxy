@@ -223,17 +223,17 @@
                         <uis:MenuItem
                             Command="{Binding Start}"
                             Header="{snet:Loc 启动}"
-                            Icon="{uis:SymbolIcon Symbol=Window20}"
+                            Icon="{uis:SymbolIcon Symbol=Play20}"
                             IsEnabled="{Binding StartIsEnabled}" />
                         <uis:MenuItem
                             Command="{Binding Stop}"
                             Header="{snet:Loc 停止}"
-                            Icon="{uis:SymbolIcon Symbol=Window20}"
+                            Icon="{uis:SymbolIcon Symbol=Stop20}"
                             IsEnabled="{Binding StopIsEnabled}" />
                         <uis:MenuItem
                             Command="{Binding Restart}"
                             Header="{snet:Loc 重启}"
-                            Icon="{uis:SymbolIcon Symbol=Window20}"
+                            Icon="{uis:SymbolIcon Symbol=ArrowClockwise20}"
                             IsEnabled="{Binding RestartIsEnabled}" />
                         <Separator x:Name="TrayDeviceSeparator" Margin="0,3" />
                         <uis:MenuItem

@@ -79,9 +79,3 @@ export function stats() {
     enabled,
   };
 }
-
-export function configure(opts = {}) {
-  if (opts.maxSize != null) maxSize = opts.maxSize;
-  if (opts.ttlSeconds != null) ttlMs = opts.ttlSeconds * 1000;
-  if (opts.enabled != null) enabled = opts.enabled;
-}

@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 const ts = () => new Date().toLocaleTimeString("en-US", { hour12: false });
 
 let _bannerCollapsed = [];
@@ -16,6 +18,16 @@ const VISIBLE_LINES = 10;
 let _boxW = 78;
 const setBoxWidth = (w) => { _boxW = w; };
 const _visLen = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
+
+// 向日志缓冲区推入一条消息并更新滚动偏移
+function _pushToBuffer(text, isDebug = false) {
+  const oldLen = _visibleBuffer().length;
+  _buffer.push({ text, debug: isDebug, ts: ts() });
+  if (_scrollMode) {
+    _scrollOffset += _visibleBuffer().length - oldLen;
+    _updatePageCount();
+  } else { _scrollOffset = 0; _redraw(); }
+}
 
 function _debugOn() { return Bun.env.DEBUG === "1" || Bun.env.DEBUG === "true" || Bun.env.DEBUG === "yes"; }
 function _visibleBuffer() { return _debugOn() ? _buffer : _buffer.filter(e => !e.debug); }
@@ -199,8 +211,8 @@ function _redraw() {
     for (let i = start; i < total; i++) {
       out += "\x1b[90m" + (vis[i].ts || ts()) + "\x1b[0m " + vis[i].text + "\n";
     }
-    if (total === 0) out += "\x1b[90m  idle...\x1b[0m\n";
-    else out += "\x1b[90m\u2500 live tail (" + total + " entries) \u2500 \u2191\u2193 PgUp PgDn \u2500\x1b[0m\n";
+    if (total === 0) out += `\x1b[90m${t("dashIdle")}\x1b[0m\n`;
+    else out += `\x1b[90m${t("dashLiveTail", total)}\x1b[0m\n`;
   }
   process.stdout.write(out);
 }
@@ -209,13 +221,7 @@ function _redraw() {
 
 function log(msg) {
   if (_dashboard) {
-    const vb = _visibleBuffer();
-    const oldLen = vb.length;
-    _buffer.push({ text: msg, debug: false, ts: ts() });
-    if (_scrollMode) {
-      _scrollOffset += _visibleBuffer().length - oldLen;
-      _updatePageCount();
-    } else { _scrollOffset = 0; _redraw(); }
+    _pushToBuffer(msg, false);
   } else {
     process.stdout.write(`\x1b[90m${ts()}\x1b[0m ${msg}\n`);
   }
@@ -223,13 +229,7 @@ function log(msg) {
 
 function warn(msg) {
   if (_dashboard) {
-    const vb = _visibleBuffer();
-    const oldLen = vb.length;
-    _buffer.push({ text: "\x1b[33m" + msg + "\x1b[0m", debug: false, ts: ts() });
-    if (_scrollMode) {
-      _scrollOffset += _visibleBuffer().length - oldLen;
-      _updatePageCount();
-    } else { _scrollOffset = 0; _redraw(); }
+    _pushToBuffer("\x1b[33m" + msg + "\x1b[0m", false);
   } else {
     process.stderr.write(`\x1b[90m${ts()}\x1b[0m \x1b[33m${msg}\x1b[0m\n`);
   }
@@ -237,13 +237,7 @@ function warn(msg) {
 
 function error(msg) {
   if (_dashboard) {
-    const vb = _visibleBuffer();
-    const oldLen = vb.length;
-    _buffer.push({ text: "\x1b[31m" + msg + "\x1b[0m", debug: false, ts: ts() });
-    if (_scrollMode) {
-      _scrollOffset += _visibleBuffer().length - oldLen;
-      _updatePageCount();
-    } else { _scrollOffset = 0; _redraw(); }
+    _pushToBuffer("\x1b[31m" + msg + "\x1b[0m", false);
   } else {
     process.stderr.write(`\x1b[90m${ts()}\x1b[0m \x1b[31m${msg}\x1b[0m\n`);
   }
@@ -251,15 +245,7 @@ function error(msg) {
 
 function debug(msg) {
   if (_debugOn()) process.stdout.write(`\x1b[90m${ts()}\x1b[0m ${msg}\n`);
-  if (_dashboard) {
-    const vb = _visibleBuffer();
-    const oldLen = vb.length;
-    _buffer.push({ text: msg, debug: true, ts: ts() });
-    if (_scrollMode) {
-      _scrollOffset += _visibleBuffer().length - oldLen;
-      _updatePageCount();
-    } else { _scrollOffset = 0; _redraw(); }
-  }
+  if (_dashboard) _pushToBuffer(msg, true);
 }
 
 function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId }) {
@@ -329,7 +315,7 @@ function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId })
 }
 
 function redrawBanner() { if (_dashboard) _redraw(); }
-export { ts, log, warn, error, debug, reqLog, enableDashboard, disableDashboard, onCommand, redrawBanner, setBoxWidth };
+export { log, warn, error, debug, reqLog, enableDashboard, disableDashboard, onCommand, redrawBanner, setBoxWidth };
 
 function collapseBanner() {
   if (!_dashboard || _collapsed) return;

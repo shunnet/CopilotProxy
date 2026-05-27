@@ -54,10 +54,18 @@ public static class EnvHandle
         model.ConcurrencyThinking = GetInt(envMap, "CONCURRENCY_THINKING", 1);
         model.ConcurrencyStandard = GetInt(envMap, "CONCURRENCY_STANDARD", 3);
         model.RetryMax = GetInt(envMap, "RETRY_MAX", 3);
+        model.RetryBaseDelayMs = GetInt(envMap, "RETRY_BASE_DELAY_MS", 100);
+        model.TruncateToolOutput = GetBool(envMap, "TRUNCATE_TOOL_OUTPUT", true);
+        model.ThinkingTimeoutMs = GetInt(envMap, "THINKING_TIMEOUT_MS", 120000);
+        model.RequestTimeoutMs = GetInt(envMap, "REQUEST_TIMEOUT_MS", 120000);
+        model.MaxRequestBodyBytes = GetInt(envMap, "MAX_REQUEST_BODY_BYTES", 67108864);
         model.ForceAllCapabilities = GetBool(envMap, "FORCE_ALL_CAPABILITIES", true);
         model.DefaultContextLength = GetInt(envMap, "DEFAULT_CONTEXT_LENGTH", 131072);
         model.SessionKeepaliveEnabled = GetBool(envMap, "SESSION_KEEPALIVE_ENABLED", true);
+        model.SessionKeepaliveIntervalMs = GetInt(envMap, "SESSION_KEEPALIVE_INTERVAL_MS", 120000);
         model.SessionKeepaliveIdleTimeoutMs = GetInt(envMap, "SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", 600000);
+        model.SessionKeepaliveMaxLifetimeMs = GetInt(envMap, "SESSION_KEEPALIVE_MAX_LIFETIME_MS", 86400000);
+        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", 1.25);
 
         return model;
     }
@@ -85,15 +93,11 @@ public static class EnvHandle
         var lines = new List<string>
         {
             "# === 服务器配置 ===",
-            $"# 监听端口（默认 11434）",
             $"SERVER_PORT={model.ServerPort}",
-            $"# 默认模型",
             $"DEFAULT_MODEL={model.DefaultModel}",
             "",
             "# === DeepSeek API ===",
-            "# API 地址（可改为转发 API 地址）",
             $"DEEPSEEK_BASE_URL={model.DeepSeekBaseUrl}",
-            "# 获取 API Key：https://platform.deepseek.com/api_keys",
             $"DEEPSEEK_API_KEY={model.DeepSeekApiKey}",
             "",
             "# === 小米 MiMo API ===",
@@ -113,14 +117,22 @@ public static class EnvHandle
             $"CONCURRENCY_THINKING={model.ConcurrencyThinking}",
             $"CONCURRENCY_STANDARD={model.ConcurrencyStandard}",
             $"RETRY_MAX={model.RetryMax}",
+            $"RETRY_BASE_DELAY_MS={model.RetryBaseDelayMs}",
+            $"TRUNCATE_TOOL_OUTPUT={model.TruncateToolOutput.ToString().ToLower()}",
+            $"THINKING_TIMEOUT_MS={model.ThinkingTimeoutMs}",
+            $"REQUEST_TIMEOUT_MS={model.RequestTimeoutMs}",
+            $"MAX_REQUEST_BODY_BYTES={model.MaxRequestBodyBytes}",
             "",
             "# === 模型元数据 ===",
             $"FORCE_ALL_CAPABILITIES={model.ForceAllCapabilities.ToString().ToLower()}",
             $"DEFAULT_CONTEXT_LENGTH={model.DefaultContextLength}",
+            $"DEFAULT_TEMPERATURE={model.DefaultTemperature}",
             "",
             "# === 会话保活 ===",
             $"SESSION_KEEPALIVE_ENABLED={model.SessionKeepaliveEnabled.ToString().ToLower()}",
+            $"SESSION_KEEPALIVE_INTERVAL_MS={model.SessionKeepaliveIntervalMs}",
             $"SESSION_KEEPALIVE_IDLE_TIMEOUT_MS={model.SessionKeepaliveIdleTimeoutMs}",
+            $"SESSION_KEEPALIVE_MAX_LIFETIME_MS={model.SessionKeepaliveMaxLifetimeMs}",
             "",
         };
 
@@ -174,6 +186,15 @@ public static class EnvHandle
             "false" or "0" or "no" or "off" or "n" => false,
             _ => defaultValue,
         };
+    }
+
+    /// <summary>
+    /// 从字典中读取浮点值，不存在或解析失败时返回默认值（可为 null）
+    /// </summary>
+    private static double? GetDouble(Dictionary<string, string> map, string key, double? defaultValue)
+    {
+        if (!map.TryGetValue(key, out var v) || string.IsNullOrEmpty(v)) return defaultValue;
+        return double.TryParse(v, out var n) ? n : defaultValue;
     }
 
     #endregion

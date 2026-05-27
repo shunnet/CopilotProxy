@@ -39,13 +39,11 @@ if (typeof ReadableStream === 'undefined') {
 
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { cors } from "hono/cors";
-import { compress } from "hono/compress";
 import { config, getModels, initModels, resolveModel, resolveModelMetadata, isKnownModel, chatCompletion, APIError, isSeparator, isDeepSeekModel, isMiMoModel, SEP_DEEPSEEK, SEP_MIMO, refreshModels, bgFetchDone, fetchWithAgent, getThinkingModes, parseThinkingMode } from "./snet-handle.js";
 import { check as cacheCheck, store as cacheStore, cacheKey } from "./cache.js";
 import { ModelConcurrencyManager, RateLimitError, truncateToolMessagesInPayload, checkRequestBodySize } from "./concurrency.js";
-import { compactIdentity, compactToolInstructions, compactOllamaToolInstructions, compactCodeCompletionPrompt, compressMessages, compressHistory, buildToolRunSummary, condenseAfterTaskComplete } from "./token-optimizer.js";
-import { trackSession, touchSession, stopSession as keepaliveStopSession, shutdown as keepaliveShutdown, stats as keepaliveStats } from "./session-keepalive.js";
+import { compactIdentity, compactToolInstructions, compactOllamaToolInstructions, compactCodeCompletionPrompt, compressMessages, compressHistory } from "./token-optimizer.js";
+import { trackSession, shutdown as keepaliveShutdown, stats as keepaliveStats } from "./session-keepalive.js";
 import { handleServiceCommand, runAsService } from "./win-service.js";
 import { log, error as logErr, debug, reqLog, enableDashboard, disableDashboard, onCommand, collapseBanner, expandBanner, redrawBanner, setBoxWidth } from "./logger.js";
 import { isDeepSeekAvailable } from "./deepseek-client.js";
@@ -84,7 +82,46 @@ const err = (msg) => logErr(msg);
   try {
     const fs = await import("node:fs");
     if (!fs.existsSync(".env")) {
-      fs.writeFileSync(".env", "# === 服务器配置 ===\n# 监听端口（默认 11434）\n# SERVER_PORT=11434\n# 默认模型\n# DEFAULT_MODEL=ds/deepseek-v4-pro\n\n# === DeepSeek API ===\n# API 地址（可改为转发 API 地址）\n# DEEPSEEK_BASE_URL=https://api.deepseek.com\n# 获取 API Key：https://platform.deepseek.com/api_keys\nDEEPSEEK_API_KEY=\n\n# === 小米 MiMo API ===\n# API 地址（可改为转发 API 地址）\n# MIMO_BASE_URL=https://api.xiaomimimo.com/v1\n# 获取 API Key：https://platform.xiaomimimo.com/#/console/api-keys\nMIMO_API_KEY=\n\n# === 日志 ===\n# REQUEST_LOG=true\n# DEBUG=false\n\n# === 提示词压缩 ===\n# COMPRESSION_LEVEL=auto\n\n# === 并发与速率限制 ===\n# CONCURRENCY_THINKING=1\n# CONCURRENCY_STANDARD=3\n# RETRY_MAX=3\n\n# === 模型元数据 ===\n# FORCE_ALL_CAPABILITIES=true\n# DEFAULT_CONTEXT_LENGTH=131072\n\n# === 会话保活 ===\n# SESSION_KEEPALIVE_ENABLED=true\n# SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=600000\n");
+      fs.writeFileSync(".env", `# === 服务器配置 ===
+DEFAULT_MODEL=ds/deepseek-v4-pro
+SERVER_PORT=11434
+
+# === DeepSeek API ===
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_API_KEY=
+
+# === 小米 MiMo API ===
+MIMO_BASE_URL=https://api.xiaomimimo.com/v1
+MIMO_API_KEY=
+
+# === 日志 ===
+REQUEST_LOG=true
+DEBUG=false
+
+# === 提示词压缩 ===
+COMPRESSION_LEVEL=auto
+
+# === 并发与速率限制 ===
+CONCURRENCY_THINKING=1
+CONCURRENCY_STANDARD=3
+RETRY_MAX=3
+RETRY_BASE_DELAY_MS=100
+TRUNCATE_TOOL_OUTPUT=true
+THINKING_TIMEOUT_MS=120000
+REQUEST_TIMEOUT_MS=120000
+MAX_REQUEST_BODY_BYTES=67108864
+
+# === 模型元数据 ===
+FORCE_ALL_CAPABILITIES=true
+DEFAULT_CONTEXT_LENGTH=131072
+DEFAULT_TEMPERATURE=1.25
+
+# === 会话保活 ===
+SESSION_KEEPALIVE_ENABLED=true
+SESSION_KEEPALIVE_INTERVAL_MS=120000
+SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=600000
+SESSION_KEEPALIVE_MAX_LIFETIME_MS=86400000
+`);
       log("已创建 .env");
     }
   } catch { /* fs模块不可用，忽略 */ }
@@ -245,8 +282,9 @@ function normalizeOpenAIParams(body) {
   if (n.maxOutputTokens !== undefined && n.max_tokens === undefined) n.max_tokens = n.maxOutputTokens;
   if (n.chatTemplateKwargs !== undefined && n.chat_template_kwargs === undefined) n.chat_template_kwargs = n.chatTemplateKwargs;
   if (n.thinkingTokenBudget !== undefined && n.thinking_token_budget === undefined) n.thinking_token_budget = n.thinkingTokenBudget;
+  if (n.reasoningEffort !== undefined && n.reasoning_effort === undefined) n.reasoning_effort = n.reasoningEffort;
   delete n.topP; delete n.frequencyPenalty; delete n.presencePenalty; delete n.maxOutputTokens;
-  delete n.chatTemplateKwargs; delete n.thinkingTokenBudget;
+  delete n.chatTemplateKwargs; delete n.thinkingTokenBudget; delete n.reasoningEffort;
   return n;
 }
 
@@ -530,6 +568,20 @@ function _toolCallNames(msg) {
   return names;
 }
 
+// 从消息数组中提取所有工具名称（用于日志/错误报告）
+function _toolNames(messages) {
+  const names = [];
+  for (const m of messages || []) {
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      for (const tc of m.tool_calls) {
+        const n = tc?.function?.name || tc?.name;
+        if (n && !names.includes(n)) names.push(String(n));
+      }
+    }
+  }
+  return names.join(", ") || "(none)";
+}
+
 function _messageSignature(msg) {
   const toolCalls = (msg?.tool_calls || []).map(_normalizeToolCallForSig).filter(Boolean);
   const payload = {
@@ -598,19 +650,22 @@ function createReasoningContext(messages, model, workspaceRoot, clientTag, provi
       _sessionCounter = wsPrev.sessionId;
       sessionEntry = { id: _sessionCounter, clientTag, createdAt: new Date().toISOString(), workspaceRoot: effectiveWorkspace, lastRequestTime: 0, cacheHitStreak: 0, thinkFallbackStreak: 0, stopCount: 0 };
       _sessionRegistry.set(conv, sessionEntry);
-      debug(`\x1b[36mcontinued session ${_sessionCounter} \x1b[90m(was session ${wsPrev.sessionId}, \x1b[0m${clientTag}\x1b[90m, \x1b[0m${provider}/${model}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
+      const contModel = (model || "").startsWith(`${provider}/`) ? model : `${provider}/${model}`;
+      debug(`\x1b[36mcontinued session ${_sessionCounter} \x1b[90m(was session ${wsPrev.sessionId}, \x1b[0m${clientTag}\x1b[90m, \x1b[0m${contModel}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
       debug(`[session] NEW convId=${conv} wsRoot=${effectiveWorkspace || "(empty)"}`);
     } else {
       _sessionCounter++;
       sessionEntry = { id: _sessionCounter, clientTag, createdAt: new Date().toISOString(), workspaceRoot: effectiveWorkspace, lastRequestTime: 0, cacheHitStreak: 0, thinkFallbackStreak: 0, stopCount: 0 };
       _sessionRegistry.set(conv, sessionEntry);
-      log(`\x1b[36mnew session ${_sessionCounter} \x1b[90m(\x1b[0m${clientTag}\x1b[90m, \x1b[0m${provider}/${model}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
+      const modelLabel = (model || "").startsWith(`${provider}/`) ? model : `${provider}/${model}`;
+      log(`\x1b[36mnew session ${_sessionCounter} \x1b[90m(\x1b[0m${clientTag}\x1b[90m, \x1b[0m${modelLabel}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
       debug(`[session] NEW convId=${conv} wsRoot=${effectiveWorkspace || "(empty)"}`);
     }
   } else if (!reusedExisting) {
     debug(`[session] REUSE convId=${conv} sessionId=${sessionEntry.id}`);
   } else {
-    debug(`\x1b[36mcontinued session ${sessionEntry.id} \x1b[90m(same client, active session reused, \x1b[0m${clientTag}\x1b[90m, \x1b[0m${provider}/${model}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
+    const reuseModel = (model || "").startsWith(`${provider}/`) ? model : `${provider}/${model}`;
+    debug(`\x1b[36mcontinued session ${sessionEntry.id} \x1b[90m(same client, active session reused, \x1b[0m${clientTag}\x1b[90m, \x1b[0m${reuseModel}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
   }
 
   // Update workspace registry (always — tracks the most recent session per workspace+model)
@@ -2336,17 +2391,8 @@ app.post("/v1/chat/completions", async c => {
       // Mark as recently completed so the inevitable VS follow-up
       // ("Task marked as complete") is drained without another LLM call.
       _recentlyCompleted.set(reasoningCtx.conv, Date.now());
-      const before = userMsgs.length;
-      const condensed = condenseAfterTaskComplete(userMsgs);
-      if (condensed.length < before) {
-        const dropped = before - condensed.length;
-        userMsgs.length = 0;
-        userMsgs.push(...condensed);
-        const summaryMsg = condensed.find(m => m.role === "system" && m.content?.includes("[Task Summary]"));
-        reasoningCtx.seslog(`\x1b[35m[condensed] replaced ${dropped} tool messages with summary${summaryMsg ? " (" + summaryMsg.content.slice(0, 80) + "...)" : ""}\x1b[0m`);
-      }
       // Task is done — return hard stop instead of forwarding to LLM
-      reasoningCtx.seslog(`\x1b[33m[autopilot] task already done — returning hard stop after condensation\x1b[0m`);
+      reasoningCtx.seslog(`\x1b[33m[autopilot] task already done — returning hard stop\x1b[0m`);
       const hardTc = [{ id: callId(), type: "function", function: { name: "task_complete", arguments: "{}" } }];
       if (clientWantsStream) {
         return stream(c, async s => {
@@ -2627,24 +2673,13 @@ app.post("/v1/chat/completions", async c => {
         effectiveThinkingTag = "MEDIUM";
       }
 
-      // 为 DeepSeek 注入 reasoning_content
-      if (isDeepSeekModel(goModel) && effectiveThinkingTag) {
+      // 为 DeepSeek/MiMo 注入 reasoning_content（文档要求：工具调用轮次必须回传，否则 400 错误）
+      if ((isDeepSeekModel(goModel) || isMiMoModel(goModel)) && effectiveThinkingTag) {
         for (const m of deltaMessages) {
           if (m.role === "assistant" && m.tool_calls?.length && !m.reasoning_content) {
             m.reasoning_content = reasoningCtx.get(m, goModel) || "";
           }
         }
-      }
-      // MiMo 缺失 reasoning 时降级
-      if (isMiMoModel(goModel) && effectiveThinkingTag) {
-        let missing = false;
-        for (const m of deltaMessages) {
-          if (m.role === "assistant" && m.tool_calls?.length && !m.reasoning_content) {
-            const rc = reasoningCtx.get(m, goModel);
-            if (rc) { m.reasoning_content = rc; } else { missing = true; }
-          }
-        }
-        if (missing) { reasoningCtx.seslog("[mimo] reasoning 缺失 — 禁用思考"); effectiveThinkingTag = null; }
       }
     }
 
@@ -2657,8 +2692,8 @@ app.post("/v1/chat/completions", async c => {
     }
     const compressedMessages = compressMessages(deltaMessages, compLevel, true);
 
-    // 确保压缩后 assistant 消息的 reasoning_content 不丢失
-    if (effectiveThinkingTag && isDeepSeekModel(goModel)) {
+    // 确保压缩后 assistant 消息的 reasoning_content 不丢失（DeepSeek + MiMo）
+    if (effectiveThinkingTag && (isDeepSeekModel(goModel) || isMiMoModel(goModel))) {
       for (const cm of compressedMessages) {
         if (cm.role === "assistant" && cm.tool_calls?.length && !cm.reasoning_content) {
           const rc = reasoningCtx.get(cm, goModel);
@@ -2955,7 +2990,8 @@ app.post("/v1/chat/completions", async c => {
       if (e instanceof APIError && e.status === 400 && /reasoning_content.*must be passed back/i.test(e.message)) {
         err(`  [reasoning] stripping thinking mode & retrying (reasoning_content missing in history)`);
         const noThinkingReq = { ...nonStreamReq, stream: false };
-        delete noThinkingReq.reasoningEffort;
+        delete noThinkingReq.reasoning_effort;
+        delete noThinkingReq.thinking;
         delete noThinkingReq.thinking_token_budget;
         try {
           chunks = await cm.runRequest(goModel, async () => {
@@ -2974,7 +3010,8 @@ app.post("/v1/chat/completions", async c => {
               m.role === "system" || m.role === "user"
             );
             const bareReq = { ...nonStreamReq, messages: bareMessages, stream: false };
-            delete bareReq.reasoningEffort;
+            delete bareReq.reasoning_effort;
+            delete bareReq.thinking;
             delete bareReq.thinking_token_budget;
             try {
               chunks = await cm.runRequest(goModel, async () => {

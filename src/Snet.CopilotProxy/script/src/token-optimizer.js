@@ -399,18 +399,21 @@ function _progressiveAging(messages) {
     if (total <= 6) return m; // Don't age short conversations
     const age = total - 1 - i; // 0 = newest, high = oldest
     if (age <= 2) return m;
+    const content = typeof m.content === "string" ? m.content : "";
     if (age <= 5) {
-      // Medium age: truncate content
-      const content = typeof m.content === "string" ? m.content : "";
+      // Medium age: truncate content at word boundary
       if (content.length > 200) {
-        return { ...m, content: content.slice(0, 200) + "..." };
+        const cut = content.slice(0, 200);
+        const wordEnd = cut.lastIndexOf(" ");
+        return { ...m, content: (wordEnd > 100 ? cut.slice(0, wordEnd) : cut) + "…" };
       }
       return m;
     }
-    // Old messages: heavily summarize
-    const content = typeof m.content === "string" ? m.content : "";
+    // Old messages: heavily summarize at word boundary
     if (content.length > 80) {
-      return { ...m, content: content.slice(0, 80) + "..." };
+      const cut = content.slice(0, 80);
+      const wordEnd = cut.lastIndexOf(" ");
+      return { ...m, content: (wordEnd > 40 ? cut.slice(0, wordEnd) : cut) + "…" };
     }
     return m;
   });
@@ -487,131 +490,6 @@ function _dropOldToolOutputs(messages, keepCount) {
 
   if (!dropIndices.size) return messages;
   return messages.filter((_, i) => !dropIndices.has(i));
-}
-
-// ═══════════════════════════════════════════════════
-// Tool history summary — compact context preservation
-// ═══════════════════════════════════════════════════
-
-// Build a detailed summary from tool runs — no LLM call needed.
-// Includes file content snippets, edit diffs, search results, and assistant summaries.
-export function buildToolRunSummary(messages) {
-  if (!messages?.length) return "";
-  const reads = [];      // {file, snippet}
-  const edits = [];      // {file, old, new}
-  const creates = [];    // {file, snippet}
-  const searches = [];   // {query, results}
-  const commands = [];   // {cmd, output}
-  const assistantTexts = [];
-
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-
-    // Capture assistant text (non-tool) as context
-    if (m.role === "assistant" && !m.tool_calls?.length && typeof m.content === "string" && m.content.trim().length > 20) {
-      // Skip greetings and short filler
-      const t = m.content.trim();
-      if (!/^(ok|sure|got it|understood|thanks|hi|hello)/i.test(t)) {
-        assistantTexts.push(t.slice(0, 500));
-      }
-    }
-
-    if (m.role !== "assistant" || !m.tool_calls?.length) continue;
-
-    for (const tc of m.tool_calls) {
-      const name = tc.function?.name || "";
-      let args = {};
-      try { args = typeof tc.function?.arguments === "string" ? JSON.parse(tc.function.arguments) : (tc.function?.arguments || {}); } catch {}
-      const file = args.filePath || args.filename || args.path || args.file || "";
-      const query = args.query || args.pattern || args.search || "";
-
-      // Find the matching tool result
-      const toolResult = messages.find((rm, ri) => ri > i && rm.role === "tool" && rm.tool_call_id === tc.id);
-      const resultContent = typeof toolResult?.content === "string" ? toolResult.content : "";
-
-      if (/^(get_file|read_file)$/i.test(name)) {
-        const snippet = resultContent.slice(0, 300).replace(/\n/g, " ").trim();
-        if (file) reads.push({ file, snippet: snippet.slice(0, 200) });
-      } else if (/^(replace_string_in_file|multi_replace_string_in_file)$/i.test(name)) {
-        const old = (args.oldString || args.old_string || "").slice(0, 100);
-        const nw = (args.newString || args.new_string || "").slice(0, 100);
-        if (file) edits.push({ file, old, new: nw });
-      } else if (/^(insert_edit_into_file)$/i.test(name)) {
-        const code = (args.code || args.content || "").slice(0, 200);
-        if (file) edits.push({ file, old: "", new: code });
-      } else if (/^(create_file)$/i.test(name)) {
-        const snippet = (args.content || "").slice(0, 200).replace(/\n/g, " ").trim();
-        if (file) creates.push({ file, snippet });
-      } else if (/^(grep_search|search_content|semantic_search|code_search|file_search|find_files)$/i.test(name)) {
-        const resultLines = resultContent.split("\n").slice(0, 5).join(" | ").slice(0, 300);
-        if (query) searches.push({ query, results: resultLines });
-      } else if (/^(run_command_in_terminal|execute_command|run_in_terminal)$/i.test(name)) {
-        const cmd = (args.command || args.cmd || "").slice(0, 100);
-        const output = resultContent.slice(0, 200).replace(/\n/g, " ").trim();
-        if (cmd) commands.push({ cmd, output });
-      }
-    }
-  }
-
-  const parts = [];
-  if (reads.length) {
-    const readLines = reads.slice(0, 10).map(r => `  ${r.file}${r.snippet ? ": " + r.snippet : ""}`);
-    parts.push(`FILES READ:\n${readLines.join("\n")}`);
-  }
-  if (edits.length) {
-    const editLines = edits.slice(0, 10).map(e => {
-      if (e.old) return `  ${e.file}: "${e.old}" → "${e.new}"`;
-      return `  ${e.file}: ${e.new}`;
-    });
-    parts.push(`FILES EDITED:\n${editLines.join("\n")}`);
-  }
-  if (creates.length) {
-    const createLines = creates.slice(0, 10).map(c => `  ${c.file}${c.snippet ? ": " + c.snippet : ""}`);
-    parts.push(`FILES CREATED:\n${createLines.join("\n")}`);
-  }
-  if (searches.length) {
-    const searchLines = searches.slice(0, 5).map(s => `  "${s.query}" → ${s.results}`);
-    parts.push(`SEARCHES:\n${searchLines.join("\n")}`);
-  }
-  if (commands.length) {
-    const cmdLines = commands.slice(0, 5).map(c => `  $ ${c.cmd}${c.output ? " → " + c.output : ""}`);
-    parts.push(`COMMANDS:\n${cmdLines.join("\n")}`);
-  }
-  if (assistantTexts.length) {
-    parts.push(`ASSISTANT NOTES:\n${assistantTexts.slice(-3).map(t => "  " + t).join("\n")}`);
-  }
-
-  return parts.length ? `[Task Summary]\n${parts.join("\n\n")}` : "";
-}
-
-// After task_complete: replace all tool messages with a single summary
-export function condenseAfterTaskComplete(messages) {
-  if (!messages?.length) return messages;
-  const summary = buildToolRunSummary(messages);
-  if (!summary) return messages;
-
-  const result = [];
-  let toolBlockStart = -1;
-
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-
-    // Find start of tool block (assistant with tool_calls)
-    if (m.role === "assistant" && m.tool_calls?.length && toolBlockStart < 0) {
-      toolBlockStart = i;
-    }
-
-    // Keep non-tool messages
-    if (m.role !== "tool" && !(m.role === "assistant" && m.tool_calls?.length)) {
-      result.push(m);
-      toolBlockStart = -1; // reset — this message breaks the tool block
-    }
-    // Skip tool messages and tool-calling assistants — they'll be replaced by summary
-  }
-
-  // Insert summary at the end
-  result.push({ role: "system", content: summary });
-  return result;
 }
 
 // Lightweight version for compression — just file names, no content
@@ -703,6 +581,10 @@ const ULTRA_STOPWORDS = new Set([
   "why", "how", "all", "both", "each", "few", "more", "most", "other",
   "some", "such", "same", "so", "than", "too", "very", "just",
   "about", "now", "also", "still",
+  // 中文功能词（不改变语义的填充词）
+  "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都",
+  "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你",
+  "会", "着", "没有", "看", "好", "自己", "这",
 ]);
 
 function _heuristicPrune(text) {
@@ -722,11 +604,11 @@ function _heuristicPrune(text) {
   // Sort by score descending, keep top 70%
   const threshold = Math.floor(scored.length * 0.7);
   const keep = new Set();
-  scored
-    .slice()
-    .sort((a, b) => b.score - a.score)
+  const indexed = scored.map((s, i) => ({ s, i }));
+  indexed
+    .sort((a, b) => b.s.score - a.s.score)
     .slice(0, threshold)
-    .forEach((_, i) => keep.add(scored.indexOf(_)));
+    .forEach(entry => keep.add(entry.i));
   return lines.filter((_, i) => scored[i].score < 0 || keep.has(i)).join("\n");
 }
 
@@ -890,18 +772,18 @@ export function compressContent(content, level = "stacked", toolName = "") {
   if (!content || typeof content !== "string") return content || "";
   if (level === "off") return content;
 
-  // Preserve code blocks from compression
+  // Preserve code blocks from compression (use §CB/§IC markers to avoid null-byte collision)
   const codeBlocks = [];
   const preserved = content.replace(/```[\s\S]*?```/g, (match) => {
     codeBlocks.push(match);
-    return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
+    return `§CB${codeBlocks.length - 1}§`;
   });
 
   // Also preserve inline code
   const inlineCodes = [];
   const preserved2 = preserved.replace(/`[^`]+`/g, (match) => {
     inlineCodes.push(match);
-    return `\x00INLCODE${inlineCodes.length - 1}\x00`;
+    return `§IC${inlineCodes.length - 1}§`;
   });
 
   let result = preserved2;
@@ -942,8 +824,8 @@ export function compressContent(content, level = "stacked", toolName = "") {
   }
 
   // Restore code blocks
-  result = result.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => codeBlocks[parseInt(i)] || "");
-  result = result.replace(/\x00INLCODE(\d+)\x00/g, (_, i) => inlineCodes[parseInt(i)] || "");
+  result = result.replace(/§CB(\d+)§/g, (_, i) => codeBlocks[parseInt(i)] || "");
+  result = result.replace(/§IC(\d+)§/g, (_, i) => inlineCodes[parseInt(i)] || "");
 
   return result;
 }

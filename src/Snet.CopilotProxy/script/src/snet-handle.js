@@ -4,11 +4,10 @@ import { ModelConcurrencyManager } from "./concurrency.js";
 import { compressToolDefinitions } from "./token-optimizer.js";
 import { getDeepSeekModels, isDeepSeekAvailable, getDeepSeekApiKey, clearDeepSeekCache } from "./deepseek-client.js";
 import { getMiMoModels, isMiMoAvailable, getMiMoApiKey, clearMiMoCache } from "./mimo-client.js";
-import { log, warn, error, reqLog } from "./logger.js";
+import { log, error, reqLog } from "./logger.js";
 
 // Reasoning cache for DeepSeek (requires reasoning_content on ALL assistant msgs)
 let _lastReasoningContent = "";
-export function getLastReasoning() { return _lastReasoningContent || null; }
 export function setLastReasoning(r) { if (r) _lastReasoningContent = r; }
 
 // 根据模型能力清理消息中的 reasoning_content：
@@ -18,8 +17,10 @@ function _isReasoningModel(modelId) {
   if (!modelId) return false;
   // DeepSeek reasoning models
   if (/(?:reasoner|v4-pro|r1)/i.test(modelId)) return true;
-  // MiMo V2.5 models support reasoning_content (per platform docs)
-  if (/mimo/i.test(modelId)) return true;
+  // MiMo models with thinking support (thinking enabled by default):
+  // mimo-v2.5-pro, mimo-v2.5, mimo-v2-pro, mimo-v2-omni
+  // Excludes: mimo-v2-flash (thinking disabled by default), mimo-v2.5-tts*/mimo-v2-tts (no thinking support)
+  if (/mimo-v2[.-]pro|mimo-v2\.5(?!-tts)|mimo-v2-omni/i.test(modelId)) return true;
   return false;
 }
 
@@ -444,10 +445,23 @@ const THINKING_TAG_PARAMS = {
 
 function applyThinkingMode(body, thinking, modelId) {
   if (!thinking) return;
-  // reasoningEffort is DeepSeek-specific — MiMo doesn't support it
-  if (!isDeepSeekModel(modelId)) return;
-  const p = THINKING_TAG_PARAMS[thinking];
-  if (p) body.reasoningEffort = p.reasoningEffort;
+  if (isDeepSeekModel(modelId)) {
+    // DeepSeek: both reasoning_effort (snake_case) and thinking toggle required
+    const p = THINKING_TAG_PARAMS[thinking];
+    if (p) body.reasoning_effort = p.reasoningEffort;
+    body.thinking = { type: "enabled" };
+  } else if (isMiMoModel(modelId)) {
+    // MiMo: thinking toggle only (no reasoning_effort)
+    body.thinking = { type: "enabled" };
+  }
+  // Both DeepSeek and MiMo ignore temperature/top_p in thinking mode:
+  // DeepSeek: "setting will not trigger an error but will have no effect"
+  // MiMo: "forcibly overridden to 1.0"
+  // Strip them to avoid misleading clients and reduce payload size
+  delete body.temperature;
+  delete body.top_p;
+  delete body.presence_penalty;
+  delete body.frequency_penalty;
 }
 
 const MODEL_REQUEST_DEFAULTS = [
@@ -643,6 +657,7 @@ export async function* chatCompletion(req) {
   const info = resolveModel(model);
   const created = new Date().toISOString();
   const isDS = isDeepSeekModel(info.id);
+  const isMiMo = isMiMoModel(info.id);
 
   // Sanitize messages for the target provider (e.g. strip reasoning_content for non-reasoning models)
   let messages = sanitizeMessagesForProvider(req.messages, info.id);
@@ -706,9 +721,10 @@ export async function* chatCompletion(req) {
   }
 
   let ac = null;
+  let _abortTimer = null;
   if (!req._noTimeout) {
     const t = ModelConcurrencyManager.getInstance().getTimeoutMs(info.id);
-    if (t > 0) { ac = new AbortController(); setTimeout(() => { try { ac.abort(); } catch {} }, t); }
+    if (t > 0) { ac = new AbortController(); _abortTimer = setTimeout(() => { try { ac.abort(); } catch {} }, t); }
   }
 
   const lastMsg = body.messages?.[body.messages.length - 1];
@@ -766,16 +782,19 @@ export async function* chatCompletion(req) {
       }
     }
     // Cache accumulated reasoning for next request
+    if (_abortTimer) clearTimeout(_abortTimer);
     logDone?.(Date.now() - t0);
   } catch (e) {
+    if (_abortTimer) clearTimeout(_abortTimer);
     if (e instanceof APIError && e.status === 429) {
       yield { model: req.model, created_at: created, message: { role: "assistant", content: "Rate limit exceeded." }, done: true, done_reason: "stop" };
       return;
     }
         // Handle DeepSeek reasoning_content error: retry once without thinking
-    if (isDS && e instanceof APIError && e.status === 400 && /reasoning_content.*must be passed back/i.test(e.message)) {
-      error(`[deepseek] reasoning_content error, retrying without reasoningEffort`);
-      delete body.reasoningEffort;
+    if ((isDS || isMiMo) && e instanceof APIError && e.status === 400 && /reasoning_content.*must be passed back/i.test(e.message)) {
+      error(`[deepseek] reasoning_content error, retrying without reasoning_effort`);
+      delete body.reasoning_effort;
+      delete body.thinking;
       body.max_tokens = Math.max(body.max_tokens || 4096, 2048);
       try {
         const resp2 = await apiRequest("/chat/completions", body, { signal: ac?.signal });

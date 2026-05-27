@@ -17,7 +17,7 @@ function getConfig() {
     standardConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_STANDARD || "3", 10)),
     maxRetries: Math.max(0, parseInt(Bun.env.RETRY_MAX || "3", 10)),
     retryBaseDelayMs: Math.max(50, parseInt(Bun.env.RETRY_BASE_DELAY_MS || "100", 10)),
-    thinkingTimeoutMs: Math.max(10000, parseInt(Bun.env.THINKING_TIMEOUT_MS || "60000", 10)),
+    thinkingTimeoutMs: Math.max(10000, parseInt(Bun.env.THINKING_TIMEOUT_MS || "120000", 10)),
     requestTimeoutMs: Math.max(10000, parseInt(Bun.env.REQUEST_TIMEOUT_MS || "120000", 10)),
     maxRequestBodyBytes: Math.max(262144, parseInt(Bun.env.MAX_REQUEST_BODY_BYTES || "67108864", 10)),
     truncateToolOutput: Bun.env.TRUNCATE_TOOL_OUTPUT !== "false",

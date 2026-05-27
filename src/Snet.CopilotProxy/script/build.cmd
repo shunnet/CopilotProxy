@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo ================================================
-echo  snet -- Build
+echo  Snet -- Build
 echo ================================================
 echo.
 
