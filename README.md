@@ -11,7 +11,8 @@
   <img src="https://img.shields.io/badge/.NET-10.0%2B-purple.svg" alt=".NET 10"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"/>
   <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version"/>
-  <img src="https://img.shields.io/badge/platform-Windows%2010%2B-lightgrey" alt="Windows"/>
+  <img src="https://img.shields.io/badge/platform-Windows-success"/>
+  <img src="https://img.shields.io/github/stars/shunnet/CopilotProxy?style=social"/>
 </p>
 
 <p align="center">
@@ -26,6 +27,7 @@
 <tr><td>🔌 <b>多模型支持</b></td><td>DeepSeek V4 Pro / Flash + 小米 MiMo V2.5 系列</td></tr>
 <tr><td>🖥️ <b>WPF 桌面管理</b></td><td>可视化配置 API Key、一键构建、启动/停止/重启、实时日志</td></tr>
 <tr><td>🌍 <b>中英文国际化</b></td><td>WPF 与脚本服务双向语言同步，默认中文</td></tr>
+<tr><td>🪟 <b>单实例 + 托盘</b></td><td>Mutex + NamedPipe 确保唯一实例，关闭到托盘，新启动唤醒已有窗口</td></tr>
 <tr><td>🔄 <b>Ollama 协议兼容</b></td><td>模拟 Ollama API，VS 2026 / VS Code 原生接入</td></tr>
 <tr><td>🧠 <b>推理模式</b></td><td>支持 LOW / MEDIUM / HIGH / MAXIMUM 四档思考强度</td></tr>
 <tr><td>📦 <b>提示词压缩</b></td><td>8 级压缩（Lite ~ Stacked），最高节省 95% Token</td></tr>
@@ -177,32 +179,43 @@ npm run node       # Node.js 备选
 
 ```
 CopilotProxy/
+├── .github/workflows/
+│   └── release.yml                # GitHub Actions 自动发版
+├── image/                         # 界面截图
 ├── src/Snet.CopilotProxy/         # WPF 管理工具
-│   ├── App.xaml.cs                # 应用入口 & 全局异常捕获
-│   ├── MainWindow.xaml            # 主窗口 UI
-│   ├── MainWindowModel.cs         # MVVM ViewModel
+│   ├── App.xaml / App.xaml.cs     # 应用入口 & 全局异常捕获 & 单实例
+│   ├── MainWindow.xaml / .cs      # 主窗口 UI & AvalonEdit 日志控件
+│   ├── MainWindowModel.cs         # MVVM ViewModel（构建/设置/启停/语言同步）
+│   ├── AssemblyInfo.cs            # 主题资源声明
+│   ├── Language.resx              # 中文本地化资源
+│   ├── Language.en.resx           # 英文国际化资源
 │   ├── handler/
-│   │   ├── CmdHandle.cs           # 脚本进程管理 & ANSI 过滤
-│   │   └── EnvHandle.cs           # .env 配置读写
+│   │   ├── CmdHandle.cs           # CMD 脚本进程管理 & ANSI 转义过滤
+│   │   ├── EnvHandle.cs           # .env 配置读写 & 双向同步
+│   │   └── SingleInstanceHandle.cs # 单实例管理（Mutex + NamedPipe）
 │   └── models/
-│       └── EnvConfigModel.cs      # 配置模型
+│       └── EnvConfigModel.cs      # 配置模型（含 DataAnnotations 验证）
 │
 ├── src/Snet.CopilotProxy/script/  # 代理服务
 │   ├── start.cmd                  # 启动脚本（自动检测 Bun/Node）
-│   ├── build.cmd                  # 构建脚本
+│   ├── build.cmd                  # 构建入口（分发到 build-bun/build-node）
+│   ├── build-bun.cmd              # Bun 编译为单文件 .exe
+│   ├── build-node.cmd             # Node.js 可移植构建
+│   ├── package.json               # npm 依赖声明
+│   ├── bunfig.toml                # Bun 配置
 │   └── src/
-│       ├── server.js              # 主服务入口 & HTTP 路由
-│       ├── snet-handle.js         # 模型管理 & API 请求
-│       ├── token-optimizer.js     # 提示词压缩引擎
-│       ├── logger.js              # 控制台仪表盘日志
-│       ├── i18n.js                # 中英文国际化
-│       ├── concurrency.js         # 并发队列管理
+│       ├── server.js              # 主服务入口 & Hono HTTP 路由 & 仪表盘 TUI
+│       ├── snet-handle.js         # 模型管理 & API 请求 & 聊天补全
+│       ├── token-optimizer.js     # 8 级提示词压缩引擎
+│       ├── logger.js              # 控制台仪表盘日志（滚动/折叠）
+│       ├── i18n.js                # 中英文国际化（70+ key）
+│       ├── concurrency.js         # 并发队列管理 & 指数退避重试
 │       ├── cache.js               # LRU 响应缓存
-│       ├── session-keepalive.js   # 会话保活
-│       ├── deepseek-client.js     # DeepSeek API 封装
-│       ├── mimo-client.js         # MiMo API 封装
-│       ├── win-service.js         # Windows 服务集成
-│       └── polyfill.js            # 跨运行时兼容层
+│       ├── session-keepalive.js   # 会话保活（KV Cache 维持）
+│       ├── deepseek-client.js     # DeepSeek API 封装（模型列表/V3）
+│       ├── mimo-client.js         # MiMo API 封装（模型列表/V2.5）
+│       ├── win-service.js         # Windows 服务集成（bun:ffi + SCM）
+│       └── polyfill.js            # 跨运行时兼容层（Bun/Node）
 ```
 
 ## 🔧 高级特性
