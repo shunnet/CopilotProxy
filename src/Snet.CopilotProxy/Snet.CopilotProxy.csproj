@@ -9,7 +9,7 @@
 		<ApplicationIcon>icon.ico</ApplicationIcon>
 		<Company>Shunnet.top</Company>
 		<Product>CopilotProxy</Product>
-		<Version>1.0.0.2</Version>
+		<Version>1.0.0.3</Version>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
@@ -92,6 +92,9 @@
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
 		<None Update="script\src\token-optimizer.js">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Update="script\src\tool-schemas.js">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
 		<None Update="script\src\win-service.js">

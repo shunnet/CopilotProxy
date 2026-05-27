@@ -10,7 +10,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/.NET-10.0%2B-purple.svg" alt=".NET 10"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"/>
-  <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-1.0.0.3-blue" alt="Version"/>
   <img src="https://img.shields.io/badge/platform-Windows-success"/>
   <img src="https://img.shields.io/github/stars/shunnet/CopilotProxy?style=social"/>
 </p>
@@ -60,6 +60,12 @@ MIMO_API_KEY=sk-your-mimo-key
 ```
 
 > 💡 配置后自动同步到 `script/.env` 和 `.dist/.env`。服务运行时保存配置会自动重启以应用新配置。
+
+### 2️⃣ 连接 VS Code / VS 2026
+
+**方式：Ollama 提供程序**
+
+VS Code / VS 2026 管理模型 → 提供程序选择 **Ollama** → 端点 `http://localhost:11434` → 添加
 
 ### 2️⃣ 构建 & 启动
 
@@ -206,6 +212,7 @@ CopilotProxy/
 │   └── src/
 │       ├── server.js              # 主服务入口 & Hono HTTP 路由 & 仪表盘 TUI
 │       ├── snet-handle.js         # 模型管理 & API 请求 & 聊天补全
+│       ├── tool-schemas.js        # VS/VSCode 工具 schema 定义 & 自动补全
 │       ├── token-optimizer.js     # 8 级提示词压缩引擎
 │       ├── logger.js              # 控制台仪表盘日志（滚动/折叠）
 │       ├── i18n.js                # 中英文国际化（70+ key）
@@ -239,6 +246,12 @@ CopilotProxy/
 - 指数退避 + 随机抖动
 - 429 / 502 / 503 / 504 自动重试
 - DeepSeek `reasoning_content` 错误特殊恢复
+
+### 🔧 工具调用 Schema 自动补全
+- `tool-schemas.js` 定义了 VS 2026 / VS Code 所有工具的正确参数 schema
+- `normalizeToolCall` 使用 schema 自动补全 AI 生成的缺失/错误参数
+- VS `type: "custom"` 工具调用自动转换为标准 `type: "function"` 格式
+- 新增工具只需在 schema 文件加一行，无需手写正则
 
 ### 📝 C# 日志集成（`--plain` 模式）
 C# 管理工具启动脚本时自动传入 `--plain` 参数与 `SNET_PLAIN=1` 环境变量，禁用 TUI 仪表盘，ANSI 转义码自动过滤，输出干净的文本日志。

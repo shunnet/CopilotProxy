@@ -21,9 +21,9 @@ if exist .env (
 
 if "%SERVER_PORT%"=="" set SERVER_PORT=11434
 
-REM 2. Kill any existing snet instance by window title, then clean port
-echo [INFO] Stopping any existing snet instance...
-taskkill /fi "WINDOWTITLE eq snet" /f >nul 2>&1
+REM 2. Kill any existing Snet instance by window title, then clean port
+echo [INFO] Stopping any existing Snet instance...
+taskkill /fi "WINDOWTITLE eq Snet" /f >nul 2>&1
 title Snet
 REM Wait briefly for process to die
 timeout /t 1 /nobreak >nul

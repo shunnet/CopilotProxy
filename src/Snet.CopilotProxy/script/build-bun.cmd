@@ -92,7 +92,7 @@ echo ================================================
 echo.
 echo   Output: .dist\
 echo     service.exe            C# service/console launcher (~100 KB)
-echo     snet                  Bun standalone server (~112 MB)
+echo     Snet                  Bun standalone server (~112 MB)
 echo     start.cmd              One-shot launcher
 echo.
 echo   Run: .dist\start.cmd   OR   .dist\service.exe
@@ -273,8 +273,8 @@ class StartWrapper
 
         if (interactive)
         {
-            LogErr("[ERROR] snet not found in " + baseDir);
-            LogErr("       Expected: snet next to service.exe");
+            LogErr("[ERROR] Snet not found in " + baseDir);
+            LogErr("       Expected: Snet next to service.exe");
             Log("Press any key to exit...");
             try { Console.ReadKey(true); } catch { }
         }

@@ -1,4 +1,5 @@
 import "./polyfill.js";
+import { error as logErr } from "./logger.js";
 
 // 小米 MiMo API 基础地址（OpenAI 兼容）
 const MIMO_BASE_URL = (typeof Bun !== "undefined" ? Bun.env.MIMO_BASE_URL : process.env.MIMO_BASE_URL) || "https://api.xiaomimimo.com/v1";
@@ -47,7 +48,7 @@ export async function getMiMoModels() {
 
     if (!resp.ok) {
       const body = await resp.text().catch(() => "");
-      console.error(`[mimo] /models 请求失败 ${resp.status}: ${body.slice(0, 200)}`);
+      logErr(`[mimo] /models 请求失败 ${resp.status}: ${body.slice(0, 200)}`);
       _cachedModels = [];
       return [];
     }
@@ -72,7 +73,7 @@ export async function getMiMoModels() {
 
     return _cachedModels;
   } catch (e) {
-    console.error(`[mimo] /models 请求异常: ${e.message}`);
+    logErr(`[mimo] /models 请求异常: ${e.message}`);
     _cachedModels = [];
     return [];
   }

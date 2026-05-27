@@ -1,6 +1,7 @@
 ﻿import "./polyfill.js";
+import { error as logErr } from "./logger.js";
 
-// DeepSeek API base URL (configurable via DEEPSEEK_BASE_URL env var)
+// DeepSeek API base URL
 const DEEPSEEK_BASE_URL = (typeof Bun !== "undefined" ? Bun.env.DEEPSEEK_BASE_URL : process.env.DEEPSEEK_BASE_URL) || "https://api.deepseek.com";
 
 function getDeepSeekDisplayName(modelId) {
@@ -49,6 +50,7 @@ export async function getDeepSeekModels() {
     });
     return _cachedModels;
   } catch (e) {
+    logErr(`[deepseek] /models failed: ${e.message}`);
     _cachedModels = [];
     return [];
   }

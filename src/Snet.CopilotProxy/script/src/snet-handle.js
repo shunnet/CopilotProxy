@@ -2,6 +2,7 @@
 import { t } from "./i18n.js";
 import { ModelConcurrencyManager } from "./concurrency.js";
 import { compressToolDefinitions } from "./token-optimizer.js";
+import { normalizeToolType } from "./tool-schemas.js";
 import { getDeepSeekModels, isDeepSeekAvailable, getDeepSeekApiKey, clearDeepSeekCache } from "./deepseek-client.js";
 import { getMiMoModels, isMiMoAvailable, getMiMoApiKey, clearMiMoCache } from "./mimo-client.js";
 import { log, error, reqLog } from "./logger.js";
@@ -79,7 +80,7 @@ const SEP_DEEPSEEK = "(deepseek)";
 const SEP_MIMO = "(mimo)";
 
 function sepModel(id, label) {
-  const now = new Date().toISOString().replace(/\\s+/g, " ");
+  const now = new Date().toISOString().replace(/\s+/g, " ");
   return {
     name: label,
     model: `${id}:latest`,
@@ -275,7 +276,7 @@ function inferQuantization(modelId) { const m = (modelId || "").match(/(Q\d+[_.]
 async function fetchModels() {
   const start = Date.now();
   await fetchModelsDev();
-  const now = new Date().toISOString().replace(/\\s+/g, " ");
+  const now = new Date().toISOString().replace(/\s+/g, " ");
   const models = [];
 
   let dsCount = 0;
@@ -661,6 +662,14 @@ export async function* chatCompletion(req) {
 
   // Sanitize messages for the target provider (e.g. strip reasoning_content for non-reasoning models)
   let messages = sanitizeMessagesForProvider(req.messages, info.id);
+
+  // Normalize VS custom type tool calls to standard function format
+  messages = messages.map(m => {
+    if (m.role !== "assistant" || !m.tool_calls?.length) return m;
+    const normalized = m.tool_calls.map(normalizeToolType);
+    const changed = normalized.some((tc, i) => tc !== m.tool_calls[i]);
+    return changed ? { ...m, tool_calls: normalized } : m;
+  });
 
   // Context compaction: dedup re-reads + truncate oversized tool results
   messages = _compactContext(messages);

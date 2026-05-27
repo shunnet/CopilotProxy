@@ -49,6 +49,7 @@ import { log, error as logErr, debug, reqLog, enableDashboard, disableDashboard,
 import { isDeepSeekAvailable } from "./deepseek-client.js";
 import { isMiMoAvailable } from "./mimo-client.js";
 import { t, setLanguage, getLanguage } from "./i18n.js";
+import { applyToolDefaults, normalizeToolType } from "./tool-schemas.js";
 
 // ── Service command routing (early exit for install/uninstall) ──
 {
@@ -941,7 +942,9 @@ function normalizeToolCall(tc) {
       if (!t || /^(?:null|true|false|-?\d)/.test(t)) return `"${field}":${val}`;
       return `"${field}":"${t}"`;
     });
-    const args = JSON.parse(json);
+    const rawArgs = JSON.parse(json);
+    // 用 schema 自动补全缺失的必填参数（来源：VS / VSCode 工具定义）
+    const args = applyToolDefaults(name, rawArgs);
     const safe = {};
 
     // ── Confirmed VS schemas (VS Insiders 18.7) ──
@@ -3330,9 +3333,9 @@ app.post("/v1/engines/copilot-codex/completions", async c => {
         const w = (o) => s.write(`data: ${JSON.stringify(o)}\n\n`);
         const base = { id: cmplId, object: "text_completion", created, model: body.model || config.defaultModel };
         const words = (sanitized || "").match(/.{1,20}/g) || [sanitized || ""];
-        for (const w of words) {
-          if (!w) continue;
-          await w({ ...base, choices: Array.from({ length: n }, (_, i) => ({ text: w, index: i, logprobs: null, finish_reason: null })) });
+        for (const chunk of words) {
+          if (!chunk) continue;
+          await w({ ...base, choices: Array.from({ length: n }, (_, i) => ({ text: chunk, index: i, logprobs: null, finish_reason: null })) });
         }
         await w({ ...base, choices: Array.from({ length: n }, (_, i) => ({ text: "", index: i, logprobs: null, finish_reason: "stop" })), usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
         await s.write("data: [DONE]\n\n");
