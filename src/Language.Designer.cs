@@ -79,6 +79,15 @@ namespace Snet.CopilotProxy {
         }
         
         /// <summary>
+        ///   查找类似 [ Error ] 检查更新失败: {0} 的本地化字符串。
+        /// </summary>
+        internal static string Error_CheckUpdateFailed {
+            get {
+                return ResourceManager.GetString("Error_CheckUpdateFailed", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   查找类似 [ Error ] 初始化失败: {0} 的本地化字符串。
         /// </summary>
         internal static string Error_InitFailed {
@@ -102,6 +111,15 @@ namespace Snet.CopilotProxy {
         internal static string Error_ReadStreamFailed {
             get {
                 return ResourceManager.GetString("Error_ReadStreamFailed", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   查找类似 [ Error ] 删除 .dist 失败: {0} 的本地化字符串。
+        /// </summary>
+        internal static string Error_ReBuildDeleteFailed {
+            get {
+                return ResourceManager.GetString("Error_ReBuildDeleteFailed", resourceCulture);
             }
         }
         
@@ -187,6 +205,24 @@ namespace Snet.CopilotProxy {
         }
         
         /// <summary>
+        ///   查找类似 [ Info ] 正在检查更新… 的本地化字符串。
+        /// </summary>
+        internal static string Info_CheckingUpdate {
+            get {
+                return ResourceManager.GetString("Info_CheckingUpdate", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   查找类似 [ Info ] 配置已保存 的本地化字符串。
+        /// </summary>
+        internal static string Info_ConfigSaved {
+            get {
+                return ResourceManager.GetString("Info_ConfigSaved", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   查找类似 [ Info ] 配置已保存，正在重启服务以应用新配置… 的本地化字符串。
         /// </summary>
         internal static string Info_ConfigSavedRestarting {
@@ -205,11 +241,29 @@ namespace Snet.CopilotProxy {
         }
         
         /// <summary>
+        ///   查找类似 [ Info ] 配置未变更，跳过保存 的本地化字符串。
+        /// </summary>
+        internal static string Info_ConfigUnchanged {
+            get {
+                return ResourceManager.GetString("Info_ConfigUnchanged", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   查找类似 [ Info ] .dist 中无配置文件，正在创建默认配置… 的本地化字符串。
         /// </summary>
         internal static string Info_DistNoConfig {
             get {
                 return ResourceManager.GetString("Info_DistNoConfig", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   查找类似 [ Info ] 发现新版本！当前: {0}，最新: {1}，请前往 https://github.com/shunnet/CopilotProxy/releases 下载 的本地化字符串。
+        /// </summary>
+        internal static string Info_NewVersion {
+            get {
+                return ResourceManager.GetString("Info_NewVersion", resourceCulture);
             }
         }
         
@@ -228,6 +282,24 @@ namespace Snet.CopilotProxy {
         internal static string Info_ProcessTerminated {
             get {
                 return ResourceManager.GetString("Info_ProcessTerminated", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   查找类似 [ Info ] 已删除 .dist 构建目录 的本地化字符串。
+        /// </summary>
+        internal static string Info_ReBuildDeleted {
+            get {
+                return ResourceManager.GetString("Info_ReBuildDeleted", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   查找类似 [ Info ] 正在停止服务… 的本地化字符串。
+        /// </summary>
+        internal static string Info_ReBuildStopping {
+            get {
+                return ResourceManager.GetString("Info_ReBuildStopping", resourceCulture);
             }
         }
         
@@ -264,6 +336,15 @@ namespace Snet.CopilotProxy {
         internal static string Info_ServiceStopping {
             get {
                 return ResourceManager.GetString("Info_ServiceStopping", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   查找类似 [ Info ] 已是最新版本（当前: {0}，最新: {1}） 的本地化字符串。
+        /// </summary>
+        internal static string Info_UpToDate {
+            get {
+                return ResourceManager.GetString("Info_UpToDate", resourceCulture);
             }
         }
         
@@ -358,6 +439,15 @@ namespace Snet.CopilotProxy {
         }
         
         /// <summary>
+        ///   查找类似 检查更新 的本地化字符串。
+        /// </summary>
+        internal static string 检查更新 {
+            get {
+                return ResourceManager.GetString("检查更新", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   查找类似 清空 的本地化字符串。
         /// </summary>
         internal static string 清空 {
@@ -381,6 +471,15 @@ namespace Snet.CopilotProxy {
         internal static string 重启 {
             get {
                 return ResourceManager.GetString("重启", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   查找类似 重建 的本地化字符串。
+        /// </summary>
+        internal static string 重建 {
+            get {
+                return ResourceManager.GetString("重建", resourceCulture);
             }
         }
     }

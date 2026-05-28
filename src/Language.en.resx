@@ -166,4 +166,37 @@
   <data name="关闭" xml:space="preserve">
     <value>Close</value>
   </data>
+  <data name="重建" xml:space="preserve">
+    <value>ReBuild</value>
+  </data>
+  <data name="Info_ReBuildStopping" xml:space="preserve">
+    <value>[ Info ] Stopping service...</value>
+  </data>
+  <data name="Info_ReBuildDeleted" xml:space="preserve">
+    <value>[ Info ] .dist build directory deleted</value>
+  </data>
+  <data name="Error_ReBuildDeleteFailed" xml:space="preserve">
+    <value>[ Error ] Failed to delete .dist: {0}</value>
+  </data>
+  <data name="Info_ConfigUnchanged" xml:space="preserve">
+    <value>[ Info ] No changes detected, skipping save</value>
+  </data>
+  <data name="Info_ConfigSaved" xml:space="preserve">
+    <value>[ Info ] Configuration saved</value>
+  </data>
+  <data name="检查更新" xml:space="preserve">
+    <value>CheckUpdates</value>
+  </data>
+  <data name="Info_CheckingUpdate" xml:space="preserve">
+    <value>[ Info ] Checking for updates...</value>
+  </data>
+  <data name="Info_UpToDate" xml:space="preserve">
+    <value>[ Info ] Up to date (current: {0}, latest: {1})</value>
+  </data>
+  <data name="Info_NewVersion" xml:space="preserve">
+    <value>[ Info ] New version found! Current: {0}, latest: {1}. Download at https://github.com/shunnet/CopilotProxy/releases</value>
+  </data>
+  <data name="Error_CheckUpdateFailed" xml:space="preserve">
+    <value>[ Error ] Update check failed: {0}</value>
+  </data>
 </root>

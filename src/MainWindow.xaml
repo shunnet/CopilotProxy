@@ -77,6 +77,31 @@
                     HorizontalAlignment="Right"
                     VerticalAlignment="Top"
                     ui:ButtonAssist.CornerRadius="0"
+                    Command="{Binding ReBuild}"
+                    IsEnabled="{Binding ReBuildIsEnabled}"
+                    Style="{StaticResource MaterialDesignFlatSecondaryButton}">
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                        <ui:PackIcon
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Kind="Building" />
+                        <TextBlock
+                            Margin="5,0,0,0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Text="{snet:Loc 重建}"
+                            TextAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    Margin="0,-32,0,0"
+                    Padding="10,0,10,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    ui:ButtonAssist.CornerRadius="0"
                     Command="{Binding Settings}"
                     IsEnabled="{Binding SettingsIsEnabled}"
                     Style="{StaticResource MaterialDesignFlatSecondaryButton}">
@@ -240,6 +265,10 @@
                             Command="{Binding ShowWindow}"
                             Header="{snet:Loc 显示窗口}"
                             Icon="{uis:SymbolIcon Symbol=Window20}" />
+                        <uis:MenuItem
+                            Command="{Binding CheckUpdates}"
+                            Header="{snet:Loc 检查更新}"
+                            Icon="{uis:SymbolIcon Symbol=DualScreenUpdate24}" />
                         <uis:MenuItem
                             Command="{Binding Close}"
                             Header="{snet:Loc 关闭}"

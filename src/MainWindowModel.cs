@@ -10,6 +10,7 @@ using Snet.Windows.Controls.handler;
 using Snet.Windows.Core.mvvm;
 using System.IO;
 using System.Net.Http;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Windows;
 
@@ -51,6 +52,8 @@ namespace Snet.CopilotProxy
 
                 _ = ShowAsync(App.LanguageOperate.GetLanguageValue("Welcome"));
 
+                await CheckUpdatesAsync();
+
                 await CheckNodeJsAsync();
 
                 if (File.Exists(EnvHandle.GetEnvPath()))
@@ -58,6 +61,7 @@ namespace Snet.CopilotProxy
                     SettingsIsEnabled = true;
                     StartIsEnabled = Directory.Exists(App.DistPath);
                     BuildIsEnabled = !StartIsEnabled;
+                    ReBuildIsEnabled = Directory.Exists(App.DistPath);
                 }
                 else
                 {
@@ -108,6 +112,15 @@ namespace Snet.CopilotProxy
         {
             get => GetProperty(() => RestartIsEnabled);
             set => SetProperty(() => RestartIsEnabled, value);
+        }
+
+        /// <summary>
+        /// 重新构建按钮是否可用
+        /// </summary>
+        public bool ReBuildIsEnabled
+        {
+            get => GetProperty(() => ReBuildIsEnabled);
+            set => SetProperty(() => ReBuildIsEnabled, value);
         }
 
         #endregion
@@ -188,6 +201,7 @@ namespace Snet.CopilotProxy
             }
 
             BuildIsEnabled = false;
+            ReBuildIsEnabled = false;
             StopIsEnabled = true;
             await ShowAsync(App.LanguageOperate.GetLanguageValue("Info_BuildStarting"));
             await ShowAsync($"[ Console ] {App.BuildPath}");
@@ -216,10 +230,52 @@ namespace Snet.CopilotProxy
                 await ShowAsync(App.LanguageOperate.GetLanguageValue("Info_ConfigSynced"));
                 SettingsIsEnabled = true;
                 StartIsEnabled = true;
+                ReBuildIsEnabled = true;
             }
             StopIsEnabled = false;
             BuildIsEnabled = false;
+            ReBuildIsEnabled = Directory.Exists(App.DistPath);
             _buildCts = null;
+        }
+
+        public IAsyncRelayCommand ReBuild => p_ReBuild ??= new AsyncRelayCommand(ReBuildAsync);
+        private IAsyncRelayCommand? p_ReBuild;
+
+        /// <summary>
+        /// 重新构建：停止服务 → 删除 .dist → 重新构建
+        /// </summary>
+        public async Task ReBuildAsync()
+        {
+            if (!File.Exists(App.BuildPath))
+            {
+                await ShowAsync(App.LanguageOperate.GetLanguageValue("Error_BuildScriptNotFound"));
+                return;
+            }
+
+            // 1. 如果服务正在运行，先停止
+            if (StopIsEnabled)
+            {
+                await StopAsync();
+                await Task.Delay(500);
+            }
+
+            // 2. 删除已有的构建产物
+            if (Directory.Exists(App.DistPath))
+            {
+                try
+                {
+                    Directory.Delete(App.DistPath, true);
+                    await ShowAsync(App.LanguageOperate.GetLanguageValue("Info_ReBuildDeleted"));
+                }
+                catch (Exception ex)
+                {
+                    await ShowAsync(string.Format(App.LanguageOperate.GetLanguageValue("Error_ReBuildDeleteFailed"), ex.Message));
+                    return;
+                }
+            }
+
+            // 3. 重新构建
+            await BuildAsync();
         }
 
         #endregion
@@ -231,19 +287,30 @@ namespace Snet.CopilotProxy
 
         public async Task SettingsAsync()
         {
-            var config = File.Exists(EnvHandle.GetEnvPath())
+            var oldConfig = File.Exists(EnvHandle.GetEnvPath())
                 ? EnvHandle.Load()
                 : new EnvConfigModel();
 
-            App.Param.SetBasics(config);
+            App.Param.SetBasics(oldConfig);
             if ((await DialogHost.Show(App.Param, App.DialogHostTag)).ToBool())
             {
-                var model = App.Param.GetBasics().GetSource<EnvConfigModel>();
+                var newModel = App.Param.GetBasics().GetSource<EnvConfigModel>();
+
+                // 比较配置是否有变化，无变化则跳过保存
+                var oldJson = System.Text.Json.JsonSerializer.Serialize(oldConfig);
+                var newJson = System.Text.Json.JsonSerializer.Serialize(newModel);
+                if (oldJson == newJson)
+                {
+                    await ShowAsync(App.LanguageOperate.GetLanguageValue("Info_ConfigUnchanged"));
+                    return;
+                }
+
                 var scriptEnv = Path.Combine(App.ScriptPath, ".env");
                 var distEnv = Path.Combine(App.DistPath, ".env");
-                EnvHandle.SaveTo(model, scriptEnv);
+                EnvHandle.SaveTo(newModel, scriptEnv);
                 if (Directory.Exists(App.DistPath))
-                    EnvHandle.SaveTo(model, distEnv);
+                    EnvHandle.SaveTo(newModel, distEnv);
+                await ShowAsync(App.LanguageOperate.GetLanguageValue("Info_ConfigSaved"));
 
                 if (StopIsEnabled)
                 {
@@ -340,6 +407,7 @@ namespace Snet.CopilotProxy
 
             StopIsEnabled = false;
             RestartIsEnabled = false;
+            ReBuildIsEnabled = Directory.Exists(App.DistPath);
             StartIsEnabled = Directory.Exists(App.DistPath);
             BuildIsEnabled = true;
         }
@@ -499,6 +567,51 @@ namespace Snet.CopilotProxy
             }
             Application.Current.Shutdown();
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// 检查更新
+        /// </summary>
+        public IAsyncRelayCommand CheckUpdates => p_CheckUpdates ??= new AsyncRelayCommand(CheckUpdatesAsync);
+        private IAsyncRelayCommand? p_CheckUpdates;
+        public async Task CheckUpdatesAsync()
+        {
+            await ShowWindowAsync();
+
+            await ShowAsync(App.LanguageOperate.GetLanguageValue("Info_CheckingUpdate"));
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                http.DefaultRequestHeaders.UserAgent.TryParseAdd("CopilotProxy");
+                var resp = await http.GetStringAsync("https://api.github.com/repos/shunnet/CopilotProxy/releases/latest");
+                var json = System.Text.Json.JsonDocument.Parse(resp);
+                var latest = json.RootElement.GetProperty("tag_name").GetString()?.TrimStart('v') ?? "";
+
+                var current = GetVersion();
+                if (current == latest)
+                    await ShowAsync(string.Format(App.LanguageOperate.GetLanguageValue("Info_UpToDate"), current, latest));
+                else
+                    await ShowAsync(string.Format(App.LanguageOperate.GetLanguageValue("Info_NewVersion"), current, latest));
+            }
+            catch (Exception ex)
+            {
+                await ShowAsync(string.Format(App.LanguageOperate.GetLanguageValue("Error_CheckUpdateFailed"), ex.Message));
+            }
+        }
+        /// <summary>
+        /// 获取版本
+        /// </summary>
+        /// <returns></returns>
+        public string GetVersion()
+        {
+            try
+            {
+                return Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0.0";
+            }
+            catch
+            {
+                return "1.0.0.0";
+            }
         }
         #endregion
     }

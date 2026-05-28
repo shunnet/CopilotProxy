@@ -26,7 +26,7 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          [xml]$csproj = Get-Content src/Snet.CopilotProxy/Snet.CopilotProxy.csproj
+          [xml]$csproj = Get-Content src/Snet.CopilotProxy.csproj
           $ver = $csproj.Project.PropertyGroup.Version
           if (-not $ver) { $ver = "1.0.0" }
           echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
@@ -43,11 +43,11 @@ jobs:
           node-version: '22'
 
       - name: Restore WPF project
-        run: dotnet restore src/Snet.CopilotProxy/Snet.CopilotProxy.csproj -r ${{ matrix.arch }}
+        run: dotnet restore src/Snet.CopilotProxy.csproj -r ${{ matrix.arch }}
 
       - name: Build WPF (${{ matrix.arch }})
         run: |
-          dotnet publish src/Snet.CopilotProxy/Snet.CopilotProxy.csproj `
+          dotnet publish src/Snet.CopilotProxy.csproj `
             -c Release `
             -r ${{ matrix.arch }} `
             --self-contained false `
@@ -55,22 +55,8 @@ jobs:
             -o publish/${{ matrix.arch }}
 
       - name: Install script dependencies
-        working-directory: src/Snet.CopilotProxy/script
+        working-directory: src/script
         run: npm install --production --no-bin-links
-
-      - name: Copy script to publish (${{ matrix.arch }})
-        shell: pwsh
-        run: |
-          $dst = "publish/${{ matrix.arch }}/script"
-          New-Item -ItemType Directory -Force -Path "$dst/src"
-          Copy-Item -Recurse src/Snet.CopilotProxy/script/src/*        "$dst/src/"
-          Copy-Item -Recurse src/Snet.CopilotProxy/script/node_modules "$dst/" -ErrorAction SilentlyContinue
-          Copy-Item src/Snet.CopilotProxy/script/package.json "$dst/"
-          Copy-Item src/Snet.CopilotProxy/script/start.cmd    "$dst/"
-          Copy-Item src/Snet.CopilotProxy/script/build.cmd    "$dst/"
-          Copy-Item src/Snet.CopilotProxy/script/build-bun.cmd "$dst/"
-          Copy-Item src/Snet.CopilotProxy/script/build-node.cmd "$dst/"
-          Copy-Item src/Snet.CopilotProxy/script/bunfig.toml  "$dst/" -ErrorAction SilentlyContinue
 
       - name: Create ZIP (${{ matrix.arch }})
         shell: pwsh
@@ -96,7 +82,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          VER=$(grep -oP '<Version>\K[^<]+' src/Snet.CopilotProxy/Snet.CopilotProxy.csproj | head -1)
+          VER=$(grep -oP '<Version>\K[^<]+' src/Snet.CopilotProxy.csproj | head -1)
           echo "VERSION=$VER" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts

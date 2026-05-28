@@ -166,4 +166,37 @@
   <data name="关闭" xml:space="preserve">
     <value>关闭</value>
   </data>
+  <data name="重建" xml:space="preserve">
+    <value>重建</value>
+  </data>
+  <data name="Info_ReBuildStopping" xml:space="preserve">
+    <value>[ Info ] 正在停止服务…</value>
+  </data>
+  <data name="Info_ReBuildDeleted" xml:space="preserve">
+    <value>[ Info ] 已删除 .dist 构建目录</value>
+  </data>
+  <data name="Error_ReBuildDeleteFailed" xml:space="preserve">
+    <value>[ Error ] 删除 .dist 失败: {0}</value>
+  </data>
+  <data name="Info_ConfigUnchanged" xml:space="preserve">
+    <value>[ Info ] 配置未变更，跳过保存</value>
+  </data>
+  <data name="Info_ConfigSaved" xml:space="preserve">
+    <value>[ Info ] 配置已保存</value>
+  </data>
+  <data name="检查更新" xml:space="preserve">
+    <value>检查更新</value>
+  </data>
+  <data name="Info_CheckingUpdate" xml:space="preserve">
+    <value>[ Info ] 正在检查更新…</value>
+  </data>
+  <data name="Info_UpToDate" xml:space="preserve">
+    <value>[ Info ] 已是最新版本（当前: {0}，最新: {1}）</value>
+  </data>
+  <data name="Info_NewVersion" xml:space="preserve">
+    <value>[ Info ] 发现新版本！当前: {0}，最新: {1}，请前往 https://github.com/shunnet/CopilotProxy/releases 下载</value>
+  </data>
+  <data name="Error_CheckUpdateFailed" xml:space="preserve">
+    <value>[ Error ] 检查更新失败: {0}</value>
+  </data>
 </root>

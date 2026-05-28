@@ -135,11 +135,21 @@ npm run node       # Node.js 备选
 | `REQUEST_LOG` | `true` | 请求日志 |
 | `DEBUG` | `false` | 调试模式 |
 | `COMPRESSION_LEVEL` | `auto` | 提示词压缩级别 |
-| `SESSION_KEEPALIVE_ENABLED` | `true` | 会话保活开关 |
-| `SESSION_KEEPALIVE_IDLE_TIMEOUT_MS` | `600000` | 保活空闲超时（毫秒） |
+| `DEFAULT_TEMPERATURE` | `1.25` | 默认采样温度 |
+| `DEFAULT_CONTEXT_LENGTH` | `131072` | 默认上下文长度 |
+| `FORCE_ALL_CAPABILITIES` | `true` | 强制报告完整模型能力 |
 | `CONCURRENCY_THINKING` | `1` | 推理模型最大并发 |
 | `CONCURRENCY_STANDARD` | `3` | 标准模型最大并发 |
 | `RETRY_MAX` | `3` | 429 错误重试次数 |
+| `RETRY_BASE_DELAY_MS` | `100` | 重试基础延迟（毫秒） |
+| `THINKING_TIMEOUT_MS` | `120000` | 推理模型超时（毫秒） |
+| `REQUEST_TIMEOUT_MS` | `120000` | 请求超时（毫秒） |
+| `MAX_REQUEST_BODY_BYTES` | `67108864` | 请求体最大字节数 |
+| `TRUNCATE_TOOL_OUTPUT` | `true` | 工具输出截断 |
+| `SESSION_KEEPALIVE_ENABLED` | `true` | 会话保活开关 |
+| `SESSION_KEEPALIVE_INTERVAL_MS` | `120000` | 保活 Ping 间隔（毫秒） |
+| `SESSION_KEEPALIVE_IDLE_TIMEOUT_MS` | `600000` | 保活空闲超时（毫秒） |
+| `SESSION_KEEPALIVE_MAX_LIFETIME_MS` | `86400000` | 保活最大生命周期（毫秒） |
 
 ## 🌐 API 端点
 
