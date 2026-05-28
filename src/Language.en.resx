@@ -199,4 +199,7 @@
   <data name="Error_CheckUpdateFailed" xml:space="preserve">
     <value>[ Error ] Update check failed: {0}</value>
   </data>
+  <data name="Error_RateLimited" xml:space="preserve">
+    <value>[ Error ] GitHub API rate limit exceeded. Please try again later.</value>
+  </data>
 </root>

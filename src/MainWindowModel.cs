@@ -583,8 +583,15 @@ namespace Snet.CopilotProxy
             {
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
                 http.DefaultRequestHeaders.UserAgent.TryParseAdd("CopilotProxy");
-                var resp = await http.GetStringAsync("https://api.github.com/repos/shunnet/CopilotProxy/releases/latest");
-                var json = System.Text.Json.JsonDocument.Parse(resp);
+                var resp = await http.GetAsync("https://api.github.com/repos/shunnet/CopilotProxy/releases/latest");
+                if (resp.StatusCode == System.Net.HttpStatusCode.Forbidden || resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    await ShowAsync(App.LanguageOperate.GetLanguageValue("Error_RateLimited"));
+                    return;
+                }
+                resp.EnsureSuccessStatusCode();
+                var body = await resp.Content.ReadAsStringAsync();
+                var json = System.Text.Json.JsonDocument.Parse(body);
                 var latest = json.RootElement.GetProperty("tag_name").GetString()?.TrimStart('v') ?? "";
 
                 var current = GetVersion();

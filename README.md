@@ -10,7 +10,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/.NET-10.0%2B-purple.svg" alt=".NET 10"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"/>
-  <img src="https://img.shields.io/badge/version-1.0.0.3-blue" alt="Version"/>
   <img src="https://img.shields.io/badge/platform-Windows-success"/>
   <img src="https://img.shields.io/github/stars/shunnet/CopilotProxy?style=social"/>
 </p>
@@ -44,6 +43,8 @@ GitHub Copilot 默认仅支持 OpenAI / Anthropic 等海外模型。对于国内
 <tr><td>💬 <b>会话保活</b></td><td>自动维持 KV Cache，降低 API 费用</td></tr>
 <tr><td>🔧 <b>工具调用</b></td><td>完整的 Function Calling 支持，智能 JSON 修复</td></tr>
 <tr><td>🛡️ <b>安全可靠</b></td><td>精准进程管理（不误杀其他 node 进程）、API Key 安全存储</td></tr>
+<tr><td>🔍 <b>版本检测</b></td><td>一键检查 GitHub 最新版本，自动比对提示更新</td></tr>
+<tr><td>🔧 <b>工具 Schema 自动补全</b></td><td>VS Copilot 工具参数自动校验与补全，智能 JSON 修复</td></tr>
 </table>
 
 ## 📋 系统要求

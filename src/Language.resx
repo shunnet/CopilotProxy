@@ -199,4 +199,7 @@
   <data name="Error_CheckUpdateFailed" xml:space="preserve">
     <value>[ Error ] 检查更新失败: {0}</value>
   </data>
+  <data name="Error_RateLimited" xml:space="preserve">
+    <value>[ Error ] GitHub API 请求过于频繁，请稍后再试</value>
+  </data>
 </root>
