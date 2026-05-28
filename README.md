@@ -71,12 +71,6 @@ MIMO_API_KEY=sk-your-mimo-key
 
 > 💡 配置后自动同步到 `script/.env` 和 `.dist/.env`。服务运行时保存配置会自动重启以应用新配置。
 
-### 2️⃣ 连接 VS Code / VS 2026
-
-**方式：Ollama 提供程序**
-
-VS Code / VS 2026 管理模型 → 提供程序选择 **Ollama** → 端点 `http://localhost:11434` → 添加
-
 ### 2️⃣ 构建 & 启动
 
 在 WPF 工具中依次点击 **构建** → **启动**，或在终端中：
@@ -171,6 +165,8 @@ npm run node       # Node.js 备选
 | ▶️ 启动 | 启动代理服务 | — |
 | ⏹️ 停止 | 优雅关闭（HTTP /stop → 精准杀进程） | — |
 | 🔄 重启 | 停止 → 等待 → 启动 | — |
+| 🔧 重建 | 停止 → 删除 .dist → 重新构建 | — |
+| 🔍 检查更新 | GitHub Releases API 比对版本号 | — |
 | 🧹 清空 | 清除日志显示 | — |
 
 ## 🏗️ 技术架构
@@ -208,41 +204,40 @@ CopilotProxy/
 ├── .github/workflows/
 │   └── release.yml                # GitHub Actions 自动发版
 ├── image/                         # 界面截图
-├── src/Snet.CopilotProxy/         # WPF 管理工具
+├── src/                           # WPF 管理工具 & 代理脚本
 │   ├── App.xaml / App.xaml.cs     # 应用入口 & 全局异常捕获 & 单实例
 │   ├── MainWindow.xaml / .cs      # 主窗口 UI & AvalonEdit 日志控件
-│   ├── MainWindowModel.cs         # MVVM ViewModel（构建/设置/启停/语言同步）
+│   ├── MainWindowModel.cs         # MVVM ViewModel（构建/设置/启停/检查更新）
 │   ├── AssemblyInfo.cs            # 主题资源声明
-│   ├── Language.resx              # 中文本地化资源
+│   ├── Language.resx              # 中文本地化资源（30+ key）
 │   ├── Language.en.resx           # 英文国际化资源
 │   ├── handler/
 │   │   ├── CmdHandle.cs           # CMD 脚本进程管理 & ANSI 转义过滤
 │   │   ├── EnvHandle.cs           # .env 配置读写 & 双向同步
 │   │   └── SingleInstanceHandle.cs # 单实例管理（Mutex + NamedPipe）
-│   └── models/
-│       └── EnvConfigModel.cs      # 配置模型（含 DataAnnotations 验证）
-│
-├── src/Snet.CopilotProxy/script/  # 代理服务
-│   ├── start.cmd                  # 启动脚本（自动检测 Bun/Node）
-│   ├── build.cmd                  # 构建入口（分发到 build-bun/build-node）
-│   ├── build-bun.cmd              # Bun 编译为单文件 .exe
-│   ├── build-node.cmd             # Node.js 可移植构建
-│   ├── package.json               # npm 依赖声明
-│   ├── bunfig.toml                # Bun 配置
-│   └── src/
-│       ├── server.js              # 主服务入口 & Hono HTTP 路由 & 仪表盘 TUI
-│       ├── snet-handle.js         # 模型管理 & API 请求 & 聊天补全
-│       ├── tool-schemas.js        # VS/VSCode 工具 schema 定义 & 自动补全
-│       ├── token-optimizer.js     # 8 级提示词压缩引擎
-│       ├── logger.js              # 控制台仪表盘日志（滚动/折叠）
-│       ├── i18n.js                # 中英文国际化（70+ key）
-│       ├── concurrency.js         # 并发队列管理 & 指数退避重试
-│       ├── cache.js               # LRU 响应缓存
-│       ├── session-keepalive.js   # 会话保活（KV Cache 维持）
-│       ├── deepseek-client.js     # DeepSeek API 封装（模型列表/V3）
-│       ├── mimo-client.js         # MiMo API 封装（模型列表/V2.5）
-│       ├── win-service.js         # Windows 服务集成（bun:ffi + SCM）
-│       └── polyfill.js            # 跨运行时兼容层（Bun/Node）
+│   ├── models/
+│   │   └── EnvConfigModel.cs      # 配置模型（含 DataAnnotations 验证）
+│   ├── script/
+│   │   ├── start.cmd              # 启动脚本（自动检测 Bun/Node）
+│   │   ├── build.cmd              # 构建入口（分发到 build-bun/build-node）
+│   │   ├── build-bun.cmd          # Bun 编译为单文件 .exe
+│   │   ├── build-node.cmd         # Node.js 可移植构建
+│   │   ├── package.json           # npm 依赖声明
+│   │   ├── bunfig.toml            # Bun 配置
+│   │   └── src/
+│   │       ├── server.js          # 主服务入口 & Hono HTTP 路由 & 仪表盘 TUI
+│   │       ├── snet-handle.js     # 模型管理 & API 请求 & 聊天补全
+│   │       ├── tool-schemas.js    # VS/VSCode 工具 schema 定义 & 自动补全
+│   │       ├── token-optimizer.js # 8 级提示词压缩引擎
+│   │       ├── logger.js          # 控制台仪表盘日志（滚动/折叠）
+│   │       ├── i18n.js            # 中英文国际化（70+ key）
+│   │       ├── concurrency.js     # 并发队列管理 & 指数退避重试
+│   │       ├── cache.js           # LRU 响应缓存
+│   │       ├── session-keepalive.js # 会话保活（KV Cache 维持）
+│   │       ├── deepseek-client.js # DeepSeek API 封装
+│   │       ├── mimo-client.js     # MiMo API 封装
+│   │       ├── win-service.js     # Windows 服务集成（bun:ffi + SCM）
+│   │       └── polyfill.js        # 跨运行时兼容层（Bun/Node）
 ```
 
 ## 🔧 高级特性
@@ -308,6 +303,7 @@ C# 管理工具启动脚本时自动传入 `--plain` 参数与 `SNET_PLAIN=1` �
 
 ## 🙏 致谢
 
+- [DeepCopilot](https://github.com/deep-copilot/DeepCopilot) — DeepSeek 兼容方案参考
 - [Hono](https://hono.dev) — 轻量 HTTP 框架
 - [MaterialDesignInXaml](https://github.com/MaterialDesignInXAML/MaterialDesignInXamlToolkit) — WPF UI 组件
 
