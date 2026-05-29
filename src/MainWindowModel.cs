@@ -287,23 +287,13 @@ namespace Snet.CopilotProxy
 
         public async Task SettingsAsync()
         {
-            var oldConfig = File.Exists(EnvHandle.GetEnvPath())
+            var config = File.Exists(EnvHandle.GetEnvPath())
                 ? EnvHandle.Load()
                 : new EnvConfigModel();
-
-            App.Param.SetBasics(oldConfig);
+            App.Param.SetBasics(config);
             if ((await DialogHost.Show(App.Param, App.DialogHostTag)).ToBool())
             {
                 var newModel = App.Param.GetBasics().GetSource<EnvConfigModel>();
-
-                // 比较配置是否有变化，无变化则跳过保存
-                var oldJson = System.Text.Json.JsonSerializer.Serialize(oldConfig);
-                var newJson = System.Text.Json.JsonSerializer.Serialize(newModel);
-                if (oldJson == newJson)
-                {
-                    await ShowAsync(App.LanguageOperate.GetLanguageValue("Info_ConfigUnchanged"));
-                    return;
-                }
 
                 var scriptEnv = Path.Combine(App.ScriptPath, ".env");
                 var distEnv = Path.Combine(App.DistPath, ".env");
