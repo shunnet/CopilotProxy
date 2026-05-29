@@ -302,12 +302,6 @@ C# 管理工具启动脚本时自动传入 `--plain` 参数与 `SNET_PLAIN=1` �
   <img src="image/9.png" alt="完整工作流" width="80%"/>
 </p>
 
-## 🙏 致谢
-
-- [DeepCopilot](https://github.com/deep-copilot/DeepCopilot) — DeepSeek 兼容方案参考
-- [Hono](https://hono.dev) — 轻量 HTTP 框架
-- [MaterialDesignInXaml](https://github.com/MaterialDesignInXAML/MaterialDesignInXamlToolkit) — WPF UI 组件
-
 <p align="center">
   <sub>Made with ❤️ by <a href="https://shunnet.top">Shunnet.top</a></sub>
 </p>
