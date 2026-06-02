@@ -7,6 +7,42 @@ import { getDeepSeekModels, isDeepSeekAvailable, getDeepSeekApiKey, clearDeepSee
 import { getMiMoModels, isMiMoAvailable, getMiMoApiKey, clearMiMoCache } from "./mimo-client.js";
 import { log, error, reqLog } from "./logger.js";
 
+// ═══════════════════════════════════════════════════════════════
+// DeepSeek / MiMo Copilot Compatibility Audit
+// ═══════════════════════════════════════════════════════════════
+//
+// CRITICAL FIXES APPLIED:
+//  1. Streaming finish_reason: The main streaming loop now captures
+//     choice.finish_reason from the last delta chunk and emits it in the
+//     final done:true yield. Previously hardcoded to "stop".
+//  2. Streaming usage data: stream_options: { include_usage: true } is
+//     set for both providers, but the usage chunk (empty choices[] + usage
+//     field) was silently skipped by the !delta guard. Now captured in
+//     streamUsage and emitted with done:true.
+//  3. THINKING_TAG_PARAMS: MAXIMUM→"max", XHIGH→"xhigh", MAX→"max" are
+//     invalid for DeepSeek API (only accepts low/medium/high). Clamped
+//     to "high".
+//  4. isMiMoModel: Added regex fallback /^mimo\//i (was modelMap-only).
+//
+// OPEN ISSUES:
+//   A. MiMo thinking modes: getThinkingModes() only returns modes for
+//      DeepSeek models. MiMo v2.5-pro supports thinking but gets no
+//      thinking-mode tags in model listing.
+//   B. Cross-provider reasoning cache: _lastReasoningContent and
+//      _crossReqReasoningCache are shared across DeepSeek and MiMo. If
+//      both providers are used in the same conversation, cached
+//      reasoning_content from one provider may leak into requests for
+//      the other.
+//   C. No context window truncation beyond messagesPaging — VS sends
+//      very long contexts (up to 1M tokens). The _compactContext()
+//      deduplicates file reads and truncates tool results, but does not
+//      enforce a hard context ceiling.
+//   D. done_reason values from upstream (tool_calls, length) are now
+//      passed through for streaming, but consumers may expect specific
+//      casing/format.
+//
+// ═══════════════════════════════════════════════════════════════
+
 // Reasoning cache for DeepSeek (requires reasoning_content on ALL assistant msgs)
 let _lastReasoningContent = "";
 export function setLastReasoning(r) { if (r) _lastReasoningContent = r; }
@@ -18,10 +54,8 @@ function _isReasoningModel(modelId) {
   if (!modelId) return false;
   // DeepSeek reasoning models
   if (/(?:reasoner|v4-pro|r1)/i.test(modelId)) return true;
-  // MiMo models with thinking support (thinking enabled by default):
-  // mimo-v2.5-pro, mimo-v2.5, mimo-v2-pro, mimo-v2-omni
-  // Excludes: mimo-v2-flash (thinking disabled by default), mimo-v2.5-tts*/mimo-v2-tts (no thinking support)
-  if (/mimo-v2[.-]pro|mimo-v2\.5(?!-tts)|mimo-v2-omni/i.test(modelId)) return true;
+  // MiMo: only v2.5 and v2.5-pro support thinking
+  if (/mimo-v2\.5(?:-pro)?$/i.test(modelId)) return true;
   return false;
 }
 
@@ -145,6 +179,16 @@ const config = {
     const v = parseInt(Bun.env.MESSAGES_PAGING, 10);
     return isNaN(v) ? 0 : Math.max(0, v);
   },
+  get terminalFallback() {
+    // CR-1: Explicit opt-in required for terminal command execution on server
+    return (Bun.env.TERMINAL_FALLBACK_ENABLED || "false") === "true";
+  },
+  get passthroughBaseUrl() {
+    return Bun.env.PASSTHROUGH_BASE_URL || "";
+  },
+  get passthroughTimeoutMs() {
+    return Math.max(5000, parseInt(Bun.env.PASSTHROUGH_TIMEOUT_MS || "30000", 10));
+  },
 };
 
 // ── 模型列表 ──
@@ -152,6 +196,7 @@ let _models = null;
 let _modelMap = {};
 let _nameToId = {};
 let _mdCache = null;
+let _mdCachePromise = null;
 let _diskCachePath = null;
 let _fs = null;
 let _crypto = null;
@@ -214,7 +259,7 @@ async function checkKeyChanged() {
 
 function loadModelsFromDisk() {
   try {
-    if (!_fs || !_fs.existsSync(getKeyHashPath())) return false;
+    if (!_fs || !_fs.existsSync(getDiskPath())) return false;
     const data = JSON.parse(_fs.readFileSync(getDiskPath(), "utf8"));
     if (data._models?.length) {
       const cachedHasDS = data._models.some(m => (m.model || "").replace(":latest", "").startsWith(SEP_DEEPSEEK));
@@ -240,15 +285,18 @@ async function saveModelsToDisk() {
 
 async function fetchModelsDev() {
   if (_mdCache) return _mdCache;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 5000);
-    const resp = await fetch("https://models.dev/api.json", { signal: ctrl.signal });
-    clearTimeout(t);
-    if (!resp.ok) return {};
-    _mdCache = await resp.json();
-    return _mdCache;
-  } catch { return {}; }
+  if (!_mdCachePromise) _mdCachePromise = (async () => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const resp = await fetch("https://models.dev/api.json", { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!resp.ok) { _mdCache = {}; return _mdCache; }
+      _mdCache = await resp.json();
+      return _mdCache;
+    } catch { _mdCache = {}; return _mdCache; }
+  })();
+  return _mdCachePromise;
 }
 
 function fmtParamSize(val) {
@@ -346,7 +394,7 @@ let _bgFetch = null;
 export function bgFetchDone() { return _bgFetch; }
 
 export async function getModels() {
-  if (_models) return _models;
+  if (_models) return [..._models];
   return fetchModels();
 }
 
@@ -395,7 +443,8 @@ export function isDeepSeekModel(id) {
 
 export function isMiMoModel(id) {
   if (!id) return false;
-  return _modelMap[id.split(":")[0].trim().toLowerCase()]?._mimo === true;
+  const clean = id.split(":")[0].trim().toLowerCase();
+  return _modelMap[clean]?._mimo === true || /^mimo\//i.test(clean);
 }
 
 // ── 推理模式 ──
@@ -414,12 +463,12 @@ export function resolveModelMetadata(modelId) {
 }
 
 // ── 模型请求默认值 ──
-function _idL(m) { return (m || "").replace(/\\s+/g, " "); }
 
 export function getThinkingModes(modelId) {
   if (!modelId) return [];
   const id = (modelId || "").replace(/\s+/g, " ").toLowerCase().split(":")[0].trim();
   if (isDeepSeekModel(id)) return ["LOW", "MEDIUM", "HIGH", "MAXIMUM"];
+  // TODO: MiMo v2.5-pro supports thinking but has no mode levels. See Audit Issue A.
   return [];
 }
 
@@ -438,10 +487,12 @@ export function parseThinkingMode(modelName) {
   return { model: modelName, thinking: null };
 }
 
+// NOTE: DeepSeek API only accepts "low", "medium", "high" for reasoning_effort.
+// MAXIMUM/XHIGH are clamped to "high" (DeepSeek silently ignores unknown values).
 const THINKING_TAG_PARAMS = {
   LOW: { reasoningEffort: "low" }, MEDIUM: { reasoningEffort: "medium" }, HIGH: { reasoningEffort: "high" },
-  MAXIMUM: { reasoningEffort: "max" }, MED: { reasoningEffort: "medium" }, MAX: { reasoningEffort: "max" },
-  XHIGH: { reasoningEffort: "xhigh" }, MINIMAL: { reasoningEffort: "minimal" }, NONE: { reasoningEffort: "none" },
+  MAXIMUM: { reasoningEffort: "high" }, MED: { reasoningEffort: "medium" }, MAX: { reasoningEffort: "high" },
+  XHIGH: { reasoningEffort: "high" }, MINIMAL: { reasoningEffort: "minimal" }, NONE: { reasoningEffort: "none" },
 };
 
 function applyThinkingMode(body, thinking, modelId) {
@@ -523,14 +574,14 @@ async function apiRequest(endpoint, body, opts = {}) {
   if (isDS) {
     const key = getDeepSeekApiKey();
     if (key) headers["Authorization"] = `Bearer ${key}`;
-    else throw new APIError(401, "", "未配置 DeepSeek API Key。");
+    else throw new APIError(401, "", t("apiKeyNotConfig", "DeepSeek"));
   } else {
     const key = getMiMoApiKey();
     if (key) {
       headers["Authorization"] = `Bearer ${key}`;
       headers["api-key"] = key; // MiMo supports both auth methods
     }
-    else throw new APIError(401, "", "未配置 MiMo API Key。");
+    else throw new APIError(401, "", t("apiKeyNotConfig", "MiMo"));
   }
 
   const resp = await fetchWithAgent(url, { method: "POST", headers, body: JSON.stringify(sendBody), signal: opts?.signal });
@@ -539,7 +590,7 @@ async function apiRequest(endpoint, body, opts = {}) {
     const txt = await resp.text().catch(() => "");
     error(`[${provider}] ${resp.status}`);
 
-    let upstreamMsg = "API 错误";
+    let upstreamMsg = t("apiError");
     let code = ERROR_CODES[resp.status] || "api_error";
     let mappedStatus = resp.status;
     try {
@@ -585,6 +636,8 @@ const TOOL_TRUNCATE_TAIL = 600;
 
 function _compactContext(messages) {
   if (!messages?.length) return messages;
+  // TODO: VS sends contexts up to 1M tokens. Add hard ceiling (e.g. 128K)/token-budget-based
+  //       window truncation to prevent OOM on lower-end models. See Audit Issue C.
 
   // Step 1: deduplicate repeated file reads — keep only the LAST read of each file
   const fileReads = new Map(); // `${name}::${path}::${start}-${end}` → last index
@@ -595,7 +648,9 @@ function _compactContext(messages) {
       const name = tc.function?.name || "";
       if (!/^(read_file|get_file)$/i.test(name)) continue;
       let args = {};
-      try { args = JSON.parse(tc.function?.arguments || "{}"); } catch {}
+      let parseOk = true;
+      try { args = JSON.parse(tc.function?.arguments || "{}"); } catch { parseOk = false; }
+      if (!parseOk) continue;
       const path = args.filePath || args.filename || args.path || "";
       const range = `${args.startLine || ""}-${args.endLine || ""}`;
       fileReads.set(`${name}::${path}::${range}`, i);
@@ -613,7 +668,9 @@ function _compactContext(messages) {
         const name = tc.function?.name || "";
         if (!/^(read_file|get_file)$/i.test(name)) continue;
         let args = {};
-        try { args = JSON.parse(tc.function?.arguments || "{}"); } catch {}
+        let parseOk = true;
+        try { args = JSON.parse(tc.function?.arguments || "{}"); } catch { parseOk = false; }
+        if (!parseOk) continue;
         const path = args.filePath || args.filename || args.path || "";
         const range = `${args.startLine || ""}-${args.endLine || ""}`;
         const key = `${name}::${path}::${range}`;
@@ -648,6 +705,25 @@ function _compactContext(messages) {
   });
 
   return result;
+}
+
+// ── Shared SSE streaming parser ──
+async function* _parseSSEStream(reader, decoder, abortTimer) {
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) { clearTimeout(abortTimer); break; }
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith("data:")) continue;
+      const data = trimmed.slice(5).trim();
+      if (data === "[DONE]") { clearTimeout(abortTimer); return; }
+      try { yield JSON.parse(data); } catch {}
+    }
+  }
 }
 
 // ── 导出 ──
@@ -725,8 +801,21 @@ export async function* chatCompletion(req) {
   if (isDS && body.stream !== false) {
     body.stream_options = { include_usage: true };
   }
-  if (isDS && body.tools?.length) {
+  // FIXED: Enable stream_options for MiMo too (they support include_usage now)
+  if (isMiMo && body.stream !== false) {
+    body.stream_options = { include_usage: true };
+  }
+  if ((isDS || isMiMo) && body.tools?.length) {
     body.parallel_tool_calls = true;
+  }
+
+  // FIXED: Validate tool count against provider limits
+  // NOTE: Static import at top of file to avoid dynamic import in Bun compiled binary
+  if (body.tools?.length) {
+    const maxTools = isDS ? 128 : 128; // both DeepSeek and MiMo support 128 tools
+    if (body.tools.length > maxTools) {
+      throw new APIError(400, "", `Too many tools (${body.tools.length}). Provider supports a maximum of ${maxTools} tools.`);
+    }
   }
 
   let ac = null;
@@ -752,6 +841,7 @@ export async function* chatCompletion(req) {
       if (choice.message?.reasoning_content) {
         setLastReasoning(choice.message.reasoning_content);
       }
+      clearTimeout(_abortTimer);
       yield {
         model: req.model, created_at: created,
         message: { role: "assistant", content: choice.message.content, tool_calls: choice.message.tool_calls, reasoning_content: choice.message.reasoning_content },
@@ -762,36 +852,32 @@ export async function* chatCompletion(req) {
     }
 
     const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const textDecoder = new TextDecoder();
     let reasoningAccum = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        const t = line.trim();
-        if (!t || !t.startsWith("data: ")) continue;
-        const d = t.slice(6);
-        if (d === "[DONE]") { yield { model: req.model, created_at: created, message: { role: "assistant", content: "" }, done: true, done_reason: "stop" }; logDone?.(Date.now() - t0); return; }
-        try {
-          const j = JSON.parse(d);
-          const delta = j.choices[0]?.delta;
-          if (!delta) continue;
-          const msg = { role: "assistant" };
-          let hm = false;
-          if (delta.content != null) { msg.content = delta.content; hm = true; }
-          if (delta.tool_calls?.length) { msg.tool_calls = delta.tool_calls; hm = true; }
-          if (delta.reasoning_content) { reasoningAccum += delta.reasoning_content; msg.reasoning_content = delta.reasoning_content; hm = true; }
-          if (delta.reasoning) { msg.reasoning = delta.reasoning; hm = true; }
-          if (hm) yield { model: req.model, created_at: created, message: msg, done: false };
-        } catch {}
+    let streamUsage = null;
+    let streamFinishReason = "stop";
+    for await (const chunk of _parseSSEStream(reader, textDecoder, _abortTimer)) {
+      // Capture usage from final chunk (stream_options: include_usage)
+      // DeepSeek/MiMo emits a chunk with empty choices[] but usage field
+      if (chunk.usage && (!chunk.choices || chunk.choices.length === 0 || !chunk.choices[0]?.delta)) {
+        streamUsage = chunk.usage;
+        continue;
       }
+      const choice = chunk.choices?.[0];
+      if (!choice) continue;
+      const delta = choice.delta;
+      // Capture finish_reason from the last delta chunk (stop, tool_calls, length)
+      if (choice.finish_reason) streamFinishReason = choice.finish_reason;
+      if (!delta) continue;
+      const msg = { role: "assistant" };
+      let hm = false;
+      if (delta.content != null) { msg.content = delta.content; hm = true; }
+      if (delta.tool_calls?.length) { msg.tool_calls = delta.tool_calls; hm = true; }
+      if (delta.reasoning_content) { reasoningAccum += delta.reasoning_content; msg.reasoning_content = delta.reasoning_content; hm = true; }
+      if (delta.reasoning) { msg.reasoning = delta.reasoning; hm = true; }
+      if (hm) yield { model: req.model, created_at: created, message: msg, done: false };
     }
-    // Cache accumulated reasoning for next request
-    if (_abortTimer) clearTimeout(_abortTimer);
+    yield { model: req.model, created_at: created, message: { role: "assistant", content: "" }, done: true, done_reason: streamFinishReason, ...(streamUsage ? { usage: streamUsage } : {}) };
     logDone?.(Date.now() - t0);
   } catch (e) {
     if (_abortTimer) clearTimeout(_abortTimer);
@@ -801,12 +887,12 @@ export async function* chatCompletion(req) {
     }
         // Handle DeepSeek reasoning_content error: retry once without thinking
     if ((isDS || isMiMo) && e instanceof APIError && e.status === 400 && /reasoning_content.*must be passed back/i.test(e.message)) {
-      error(`[deepseek] reasoning_content error, retrying without reasoning_effort`);
+      error(`[${provider}] reasoning_content error, retrying without reasoning_effort`);
       delete body.reasoning_effort;
       delete body.thinking;
       body.max_tokens = Math.max(body.max_tokens || 4096, 2048);
       try {
-        const resp2 = await apiRequest("/chat/completions", body, { signal: ac?.signal });
+        const resp2 = await apiRequest("/chat/completions", body, { signal: AbortSignal.timeout?.(cfg.requestTimeoutMs || 120000) ?? undefined });
         if (req.stream === false) {
           const data = await resp2.json();
           const choice = data.choices[0];
@@ -814,41 +900,37 @@ export async function* chatCompletion(req) {
         } else {
           const reader2 = resp2.body.getReader();
           const decoder2 = new TextDecoder();
-          let buf2 = "";
-          while (true) {
-            const { done, value } = await reader2.read();
-            if (done) break;
-            buf2 += decoder2.decode(value, { stream: true });
-            const lines2 = buf2.split("\n");
-            buf2 = lines2.pop() || "";
-            for (const line of lines2) {
-              const t = line.trim();
-              if (!t || !t.startsWith("data: ")) continue;
-              const d = t.slice(6);
-              if (d === "[DONE]") { yield { model: req.model, created_at: created, message: { role: "assistant", content: "" }, done: true, done_reason: "stop" }; logDone?.(Date.now() - t0); return; }
-              try {
-                const j = JSON.parse(d);
-                const delta = j.choices[0]?.delta;
-                if (!delta) continue;
-                const msg = { role: "assistant" };
-                let hm = false;
-                if (delta.content != null) { msg.content = delta.content; hm = true; }
-                if (delta.tool_calls?.length) { msg.tool_calls = delta.tool_calls; hm = true; }
-                if (delta.reasoning_content) { msg.reasoning_content = delta.reasoning_content; hm = true; }
-                if (hm) yield { model: req.model, created_at: created, message: msg, done: false };
-              } catch {}
+          let retryStreamUsage = null;
+          let retryFinishReason = "stop";
+          for await (const chunk of _parseSSEStream(reader2, decoder2, _abortTimer)) {
+            if (chunk.usage && (!chunk.choices || chunk.choices.length === 0 || !chunk.choices[0]?.delta)) {
+              retryStreamUsage = chunk.usage;
+              continue;
             }
+            const choice = chunk.choices?.[0];
+            if (!choice) continue;
+            const delta = choice.delta;
+            if (choice.finish_reason) retryFinishReason = choice.finish_reason;
+            if (!delta) continue;
+            const msg = { role: "assistant" };
+            let hm = false;
+            if (delta.content != null) { msg.content = delta.content; hm = true; }
+            if (delta.tool_calls?.length) { msg.tool_calls = delta.tool_calls; hm = true; }
+            if (delta.reasoning_content) { msg.reasoning_content = delta.reasoning_content; hm = true; }
+            if (delta.reasoning) { msg.reasoning = delta.reasoning; hm = true; }
+            if (hm) yield { model: req.model, created_at: created, message: msg, done: false };
           }
+          yield { model: req.model, created_at: created, message: { role: "assistant", content: "" }, done: true, done_reason: retryFinishReason, ...(retryStreamUsage ? { usage: retryStreamUsage } : {}) };
         }
         logDone?.(Date.now() - t0);
         return;
       } catch (retryErr) {
-        error(`[deepseek] retry also failed: ${retryErr.message}`);
+        error(`[${provider}] retry also failed: ${retryErr.message}`);
       }
     }
     if (e instanceof APIError) throw e;
-    error(`[stream] ${e.message}`);
-    yield { model: req.model, created_at: created, message: { role: "assistant", content: `Error: ${e.message}` }, done: true, done_reason: "error" };
+    error(`[chat] ${e.message}`);
+    yield { model: req.model, created_at: created, message: { role: "assistant", content: t("apiError") }, done: true, done_reason: "error" };
   }
 }
 // ── 结束 ──

@@ -120,7 +120,7 @@ export function compactIdentity(model, thinking) {
 // ── Agent behavior core (from Copilot gpt-4.1 + Cursor Agent prompts) ──
 // ~80 tokens — shared across all clients
 function _agentCore() {
-  return `You are an expert coding agent. Work autonomously until the task is resolved — don't ask permission, act. Gather context before changes; don't assume. Don't repeat yourself after tool calls. Prefer reading large file sections over multiple small reads — minimize tool calls. Before manual research (web search, codebase exploration), check any attached instructions/copilot-instructions (marked "# Copilot Instructions") in the conversation — that is your agents.md equivalent. Only proceed with manual research if those instructions lack sufficient detail.`;
+  return `You are an expert coding agent. Work autonomously until the task is resolved — don't ask permission, act. Gather context before changes; don't assume. Don't repeat yourself after tool calls. Prefer reading large file sections over multiple small reads — minimize tool calls. When starting a multi-step task, ALWAYS create a numbered step plan (1. 2. 3.) and persist it with the plan tool before acting. Steps must be concrete: each step names specific files, edits, or searches. Never leave steps empty or vague like "Analyze code" — instead write "Read X.cs to find Y pattern". After each step, mark it complete and show progress (e.g., [1/5] done). Before manual research (web search, codebase exploration), check any attached instructions/copilot-instructions (marked "# Copilot Instructions") in the conversation — that is your agents.md equivalent. Only proceed with manual research if those instructions lack sufficient detail.`;
 }
 
 // ── Tool usage rules (token-optimized from Copilot/Cursor patterns) ──
@@ -173,6 +173,7 @@ export function compactToolInstructions(clientTag) {
     parts.push(_sqlRules());
   }
   parts.push("Call task_complete() when the task is fully done.");
+  parts.push("PLAN TOOL: When you start a task, call plan() with planMarkdown containing a numbered step list (1. 2. 3.). Each step must be concrete: name the file, describe the action, state the expected result. Do NOT leave planMarkdown empty.");
   return parts.join("\n\n");
 }
 
@@ -507,7 +508,7 @@ function _extractToolSummary(messages) {
     for (const tc of m.tool_calls) {
       const name = tc.function?.name || "";
       let args = {};
-      try { args = typeof tc.function?.arguments === "string" ? JSON.parse(tc.function.arguments) : (tc.function?.arguments || {}); } catch {}
+      try { args = typeof tc.function?.arguments === "string" ? JSON.parse(tc.function.arguments) : (tc.function?.arguments || {}); } catch { debug(`[compress] failed to parse arguments for tool call ${tc.id || "unknown"}`); }
       const file = args.filePath || args.filename || args.path || args.file || "";
       const query = args.query || args.pattern || args.search || "";
 
@@ -793,8 +794,8 @@ export function compressContent(content, level = "stacked", toolName = "") {
     result = _compressLite(result);
   }
 
-  // Caveman / Standard
-  if (level === "caveman" || level === "standard" || level === "aggressive" || level === "ultra" || level === "stacked") {
+  // Caveman / Standard (stacked does RTK first then caveman, handled below)
+  if (level === "caveman" || level === "standard" || level === "aggressive" || level === "ultra") {
     result = _applyCaveman(result);
   }
 
@@ -861,20 +862,17 @@ export function compressMessages(messages, level = "stacked", progressiveAging =
   // Drop old tool outputs: keep only the most recent N pairs
   // Default: 0 = never drop (context preserved until task complete)
   if (level !== "off") {
-    const envKeep = parseInt(typeof Bun !== "undefined" ? Bun.env.TOOL_OUTPUT_KEEP_COUNT : process.env.TOOL_OUTPUT_KEEP_COUNT, 10);
+    const envKeep = parseInt(
+      typeof Bun !== "undefined" ? Bun.env.TOOL_OUTPUT_KEEP_COUNT
+      : typeof process !== "undefined" ? process.env.TOOL_OUTPUT_KEEP_COUNT
+      : undefined,
+      10
+    );
     let keepCount = envKeep > 0 ? envKeep : 0;
     if (!keepCount) {
-      switch (level) {
-        case "lite":     keepCount = 0; break;
-        case "caveman":
-        case "standard": keepCount = 0; break;
-        case "rtk":      keepCount = 0; break;
-        case "stacked":  keepCount = 0; break;
-        case "aggressive": keepCount = 0; break;
-        case "ultra":    keepCount = 0; break;
-        case "delta":    keepCount = 0; break;
-        default:         keepCount = 0; break;
-      }
+      // Default keep counts per level (env var takes priority)
+      const DEFAULT_KEEP_COUNTS = { ultra: 2, aggressive: 1, stacked: 2, rtk: 3, caveman: 2, standard: 3, lite: 4, delta: 3 };
+      keepCount = DEFAULT_KEEP_COUNTS[level] || 0;
     }
     if (keepCount > 0) {
       const before = msgs.length;
@@ -891,14 +889,13 @@ export function compressMessages(messages, level = "stacked", progressiveAging =
     msgs = _progressiveAging(msgs);
   }
 
-  return msgs.map(m => {
+  return msgs.map((m, idx) => {
     if (!m.content) return m;
     const toolRole = m.role === "tool";
     // Infer tool name from context
     let toolName = "";
     if (toolRole && m.tool_call_id) {
       // Look back for the assistant message with matching tool_calls
-      const idx = msgs.indexOf(m);
       if (idx > 0) {
         const prev = msgs[idx - 1];
         if (prev?.tool_calls?.length) {
@@ -914,8 +911,9 @@ export function compressMessages(messages, level = "stacked", progressiveAging =
 
     let compressed;
     if (toolRole && level !== "lite" && level !== "off") {
-      // Use RTK (or stacked) for tool outputs which are often command results
-      const toolLevel = (level === "rtk" || level === "stacked") ? level : "caveman";
+      // Use the level's own compressor when available; caveman for standard/delta
+      const toolLevel = (level === "rtk" || level === "stacked") ? level :
+                        (level === "aggressive" || level === "ultra") ? level : "caveman";
       compressed = compressContent(
         typeof m.content === "string" ? m.content : JSON.stringify(m.content),
         toolLevel,

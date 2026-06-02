@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
@@ -9,11 +9,12 @@
 		<ApplicationIcon>icon.ico</ApplicationIcon>
 		<Company>Shunnet.top</Company>
 		<Product>CopilotProxy</Product>
-		<Version>1.0.0.6</Version>
+		<Version>1.0.0.7</Version>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
 	</PropertyGroup>
+
 	<ItemGroup>
 		<None Include="..\README.md" Pack="true" PackagePath="\" />
 	</ItemGroup>
@@ -45,64 +46,12 @@
 		</EmbeddedResource>
 	</ItemGroup>
 
+	<!-- script: all files → output, preserves directory structure -->
 	<ItemGroup>
-		<None Update="script\build-bun.cmd">
+		<Content Include="script\**\*">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\build-node.cmd">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\build.cmd">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\bunfig.toml">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\package.json">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\cache.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\concurrency.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\deepseek-client.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\logger.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\mimo-client.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\i18n.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\polyfill.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\server.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\session-keepalive.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\snet-handle.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\token-optimizer.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\tool-schemas.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\src\win-service.js">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="script\start.cmd">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
+			<Link>script\%(RecursiveDir)%(Filename)%(Extension)</Link>
+		</Content>
 	</ItemGroup>
 
 </Project>

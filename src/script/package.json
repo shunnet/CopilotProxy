@@ -10,7 +10,7 @@
     "node": "node --expose-gc src/server.js"
   },
   "dependencies": {
-    "hono": "^4.12.18",
+    "hono": "^4.12.23",
     "undici": "^5.29.0"
   },
   "devDependencies": {

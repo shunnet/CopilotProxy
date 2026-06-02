@@ -1,3 +1,4 @@
+import "./polyfill.js";
 import { t } from "./i18n.js";
 
 const ts = () => new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -8,6 +9,7 @@ let _banner = [];
 let _collapsed = false;
 let _activeReqs = 0;
 let _buffer = [];
+const MAX_LOG_LINES = 2000;
 let _scrollOffset = 0;
 let _scrollMode = false;
 let _dashboard = false;
@@ -23,8 +25,11 @@ const _visLen = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
 function _pushToBuffer(text, isDebug = false) {
   const oldLen = _visibleBuffer().length;
   _buffer.push({ text, debug: isDebug, ts: ts() });
+  while (_buffer.length > MAX_LOG_LINES) _buffer.shift();
   if (_scrollMode) {
     _scrollOffset += _visibleBuffer().length - oldLen;
+    const maxOff = Math.max(0, _visibleBuffer().length - VISIBLE_LINES);
+    if (_scrollOffset > maxOff) _scrollOffset = maxOff;
     _updatePageCount();
   } else { _scrollOffset = 0; _redraw(); }
 }
@@ -76,7 +81,7 @@ function _stopKeys() {
   } catch {}
 }
 
-function _onKey(buf) {
+function _onKey(buf) { try {
   // Handle mouse events (raw mode gives Buffer/Uint8Array)
   if ((Buffer.isBuffer(buf) || buf instanceof Uint8Array) && buf.length >= 6 && buf[0] === 0x1b && buf[1] === 0x5b && buf[2] === 0x4d) {
     const btn = buf[3] - 32;
@@ -159,7 +164,7 @@ function _onKey(buf) {
     _stdinBuf += s;
     process.stdout.write(s);
   }
-}
+} catch {} }
 
 let _cmdHandler = null;
 function onCommand(fn) { _cmdHandler = fn; }
@@ -283,13 +288,7 @@ function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId })
   if (elapsed != null) {
     const msg = `${prefix}${trail} \x1b[32m→\x1b[0m [${elapsed}ms]`;
     if (_dashboard) {
-      const vb = _visibleBuffer();
-      const oldLen = vb.length;
-      _buffer.push({ text: msg, debug: false, ts: ts() });
-      if (_scrollMode) {
-        _scrollOffset += _visibleBuffer().length - oldLen;
-        _updatePageCount();
-      } else { _scrollOffset = 0; _redraw(); }
+      _pushToBuffer(msg, false);
     }
     else { process.stdout.write(`\x1b[90m${ts()}\x1b[0m ${msg}\n`); }
     return;
@@ -302,13 +301,7 @@ function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId })
   return (elapsed) => {
     const msg = `${prefix}${trail} \x1b[32m→\x1b[0m [${elapsed}ms]`;
     if (_dashboard) {
-      const vb = _visibleBuffer();
-      const oldLen = vb.length;
-      _buffer.push({ text: msg, debug: false, ts: ts() });
-      if (_scrollMode) {
-        _scrollOffset += _visibleBuffer().length - oldLen;
-        _updatePageCount();
-      } else { _scrollOffset = 0; _redraw(); }
+      _pushToBuffer(msg, false);
     }
     else { process.stdout.write(`\r${initLine}\x1b[32m→\x1b[0m [${elapsed}ms]\n`); }
   };

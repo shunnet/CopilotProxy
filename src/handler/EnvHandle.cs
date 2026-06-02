@@ -44,28 +44,32 @@ public static class EnvHandle
         // 将解析出的键值对映射到模型的各个属性，未配置则使用默认值
         model.ServerPort = GetInt(envMap, "SERVER_PORT", 11434);
         model.DefaultModel = GetString(envMap, "DEFAULT_MODEL", "ds/deepseek-v4-pro");
-        model.DeepSeekBaseUrl = GetString(envMap, "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1");
+        model.DeepSeekBaseUrl = GetString(envMap, "DEEPSEEK_BASE_URL", "https://api.deepseek.com");
         model.DeepSeekApiKey = GetString(envMap, "DEEPSEEK_API_KEY", "");
         model.MiMoBaseUrl = GetString(envMap, "MIMO_BASE_URL", "https://api.xiaomimimo.com/v1");
         model.MiMoApiKey = GetString(envMap, "MIMO_API_KEY", "");
         model.RequestLog = GetBool(envMap, "REQUEST_LOG", true);
         model.Debug = GetBool(envMap, "DEBUG", false);
-        model.CompressionLevel = GetString(envMap, "COMPRESSION_LEVEL", "auto");
+        model.CompressionLevel = GetString(envMap, "COMPRESSION_LEVEL", "off");
         model.ConcurrencyThinking = GetInt(envMap, "CONCURRENCY_THINKING", 1);
         model.ConcurrencyStandard = GetInt(envMap, "CONCURRENCY_STANDARD", 3);
         model.RetryMax = GetInt(envMap, "RETRY_MAX", 3);
-        model.RetryBaseDelayMs = GetInt(envMap, "RETRY_BASE_DELAY_MS", 100);
         model.TruncateToolOutput = GetBool(envMap, "TRUNCATE_TOOL_OUTPUT", true);
         model.ThinkingTimeoutMs = GetInt(envMap, "THINKING_TIMEOUT_MS", 120000);
         model.RequestTimeoutMs = GetInt(envMap, "REQUEST_TIMEOUT_MS", 120000);
-        model.MaxRequestBodyBytes = GetInt(envMap, "MAX_REQUEST_BODY_BYTES", 67108864);
-        model.ForceAllCapabilities = GetBool(envMap, "FORCE_ALL_CAPABILITIES", true);
         model.DefaultContextLength = GetInt(envMap, "DEFAULT_CONTEXT_LENGTH", 131072);
+        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", null);
         model.SessionKeepaliveEnabled = GetBool(envMap, "SESSION_KEEPALIVE_ENABLED", true);
         model.SessionKeepaliveIntervalMs = GetInt(envMap, "SESSION_KEEPALIVE_INTERVAL_MS", 120000);
         model.SessionKeepaliveIdleTimeoutMs = GetInt(envMap, "SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", 600000);
         model.SessionKeepaliveMaxLifetimeMs = GetInt(envMap, "SESSION_KEEPALIVE_MAX_LIFETIME_MS", 86400000);
-        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", 1.25);
+        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", null);
+        model.ServerHost = GetString(envMap, "SERVER_HOST", "127.0.0.1");
+        model.MaxToolOutputChars = GetInt(envMap, "MAX_TOOL_OUTPUT_CHARS", 12000);
+        model.SkillsDir = GetString(envMap, "SKILLS_DIR", "");
+        model.SnetLanguage = GetString(envMap, "SNET_LANGUAGE", "zh");
+        model.PassthroughBaseUrl = GetString(envMap, "PASSTHROUGH_BASE_URL", "");
+        model.TerminalFallbackEnabled = GetBool(envMap, "TERMINAL_FALLBACK_ENABLED", false);
 
         return model;
     }
@@ -92,47 +96,74 @@ public static class EnvHandle
 
         var lines = new List<string>
         {
-            "# === 服务器配置 ===",
+            "# ============================================================",
+            "#  Snet Copilot Proxy — .env Configuration",
+            "#  所有配置均设有默认值，按需修改即可。",
+            "#  All settings have defaults. Only change what you need.",
+            "# ============================================================",
+            "",
+            "# --- Server ---",
+            !string.IsNullOrEmpty(model.ServerHost) && model.ServerHost != "127.0.0.1" ? $"SERVER_HOST={model.ServerHost}" : "# SERVER_HOST=127.0.0.1",
             $"SERVER_PORT={model.ServerPort}",
             $"DEFAULT_MODEL={model.DefaultModel}",
             "",
-            "# === DeepSeek API ===",
+            "# --- DeepSeek API ---",
             $"DEEPSEEK_BASE_URL={model.DeepSeekBaseUrl}",
             $"DEEPSEEK_API_KEY={model.DeepSeekApiKey}",
             "",
-            "# === 小米 MiMo API ===",
-            "# API 地址（可改为转发 API 地址）",
+            "# --- MiMo API ---",
             $"MIMO_BASE_URL={model.MiMoBaseUrl}",
-            "# 获取 API Key：https://platform.xiaomimimo.com/#/console/api-keys",
             $"MIMO_API_KEY={model.MiMoApiKey}",
             "",
-            "# === 日志 ===",
+            "# --- Logging ---",
             $"REQUEST_LOG={model.RequestLog.ToString().ToLower()}",
-            $"DEBUG={model.Debug.ToString().ToLower()}",
+            model.Debug ? "DEBUG=true" : "# DEBUG=false",
             "",
-            "# === 提示词压缩 ===",
+            "# --- Compression (off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard) ---",
             $"COMPRESSION_LEVEL={model.CompressionLevel}",
             "",
-            "# === 并发与速率限制 ===",
+            "# --- Concurrency & Rate Limiting ---",
             $"CONCURRENCY_THINKING={model.ConcurrencyThinking}",
             $"CONCURRENCY_STANDARD={model.ConcurrencyStandard}",
             $"RETRY_MAX={model.RetryMax}",
-            $"RETRY_BASE_DELAY_MS={model.RetryBaseDelayMs}",
-            $"TRUNCATE_TOOL_OUTPUT={model.TruncateToolOutput.ToString().ToLower()}",
             $"THINKING_TIMEOUT_MS={model.ThinkingTimeoutMs}",
             $"REQUEST_TIMEOUT_MS={model.RequestTimeoutMs}",
-            $"MAX_REQUEST_BODY_BYTES={model.MaxRequestBodyBytes}",
+            "# MAX_REQUEST_BODY_BYTES=67108864",
             "",
-            "# === 模型元数据 ===",
-            $"FORCE_ALL_CAPABILITIES={model.ForceAllCapabilities.ToString().ToLower()}",
+            "# --- Tool Output ---",
+            $"TRUNCATE_TOOL_OUTPUT={model.TruncateToolOutput.ToString().ToLower()}",
+            $"MAX_TOOL_OUTPUT_CHARS={model.MaxToolOutputChars}",
+            "# TOOL_OUTPUT_HEAD_CHARS=6000",
+            "# TOOL_OUTPUT_TAIL_CHARS=2000",
+            "# TOOL_OUTPUT_KEEP_COUNT=3",
+            "",
+            "# --- Context ---",
             $"DEFAULT_CONTEXT_LENGTH={model.DefaultContextLength}",
-            $"DEFAULT_TEMPERATURE={model.DefaultTemperature}",
+            "# MESSAGES_PAGING=0",
             "",
-            "# === 会话保活 ===",
+            "# --- Model Capabilities ---",
+            "# FORCE_ALL_CAPABILITIES=true",
+            model.DefaultTemperature.HasValue ? $"DEFAULT_TEMPERATURE={model.DefaultTemperature}" : "# DEFAULT_TEMPERATURE=",
+            "",
+            "# --- Session Keepalive ---",
             $"SESSION_KEEPALIVE_ENABLED={model.SessionKeepaliveEnabled.ToString().ToLower()}",
             $"SESSION_KEEPALIVE_INTERVAL_MS={model.SessionKeepaliveIntervalMs}",
             $"SESSION_KEEPALIVE_IDLE_TIMEOUT_MS={model.SessionKeepaliveIdleTimeoutMs}",
             $"SESSION_KEEPALIVE_MAX_LIFETIME_MS={model.SessionKeepaliveMaxLifetimeMs}",
+            "",
+            "# --- Skills ---",
+            !string.IsNullOrEmpty(model.SkillsDir) ? $"SKILLS_DIR={model.SkillsDir}" : "# SKILLS_DIR=",
+            "",
+            "# --- Language (zh / en) ---",
+            $"SNET_LANGUAGE={model.SnetLanguage}",
+            "",
+            "# --- Passthrough Proxy ---",
+            !string.IsNullOrEmpty(model.PassthroughBaseUrl) ? $"PASSTHROUGH_BASE_URL={model.PassthroughBaseUrl}" : "# PASSTHROUGH_BASE_URL=",
+            "# PASSTHROUGH_PREFIXES=/v1",
+            "# PASSTHROUGH_TIMEOUT_MS=30000",
+            "",
+            "# --- Security ---",
+            model.TerminalFallbackEnabled ? "TERMINAL_FALLBACK_ENABLED=true" : "# TERMINAL_FALLBACK_ENABLED=false",
             "",
         };
 

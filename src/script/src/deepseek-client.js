@@ -30,9 +30,14 @@ export async function getDeepSeekModels() {
   if (_cachedModels !== null) return _cachedModels;
   if (!isDeepSeekAvailable()) { _cachedModels = []; return []; }
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try { timer.unref?.(); } catch {}
     const resp = await fetch(`${DEEPSEEK_BASE_URL}/models`, {
       headers: { Authorization: `Bearer ${getDeepSeekApiKey()}` },
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     if (!resp.ok) { _cachedModels = []; return []; }
     const json = await resp.json();
     _cachedModels = (json.data || []).map(m => {
@@ -51,7 +56,7 @@ export async function getDeepSeekModels() {
     return _cachedModels;
   } catch (e) {
     logErr(`[deepseek] /models failed: ${e.message}`);
-    _cachedModels = [];
+    // Don't cache errors — transient failures should not permanently block retry
     return [];
   }
 }

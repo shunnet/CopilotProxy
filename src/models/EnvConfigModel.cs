@@ -24,6 +24,25 @@ public class EnvConfigModel
     [Description("默认模型")]
     public string DefaultModel { get; set; } = "ds/deepseek-v4-pro";
 
+    /// <summary>
+    /// 绑定主机地址，默认 127.0.0.1（仅本地访问）
+    /// </summary>
+    [Description("绑定地址（默认 127.0.0.1）")]
+    public string ServerHost { get; set; } = "127.0.0.1";
+
+    /// <summary>
+    /// 技能目录路径 — 自定义技能存放位置
+    /// </summary>
+    [Description("技能目录路径（默认留空为自动检测）")]
+    public string SkillsDir { get; set; } = "";
+
+    /// <summary>
+    /// 界面语言：zh（中文）/ en（英文），默认 zh
+    /// </summary>
+    [Description("界面语言（zh/en，默认 zh）")]
+    [RegularExpression(@"^(zh|en)$", ErrorMessage = "语言必须为 zh 或 en")]
+    public string SnetLanguage { get; set; } = "zh";
+
     #endregion
 
     #region DeepSeek API 配置
@@ -33,12 +52,13 @@ public class EnvConfigModel
     /// </summary>
     [Description("DeepSeek API 地址（可改为转发 API 地址）")]
     [Url(ErrorMessage = "请输入有效的 URL")]
-    public string DeepSeekBaseUrl { get; set; } = "https://api.deepseek.com/v1";
+    public string DeepSeekBaseUrl { get; set; } = "https://api.deepseek.com";
 
     /// <summary>
     /// DeepSeek API 密钥，从 https://platform.deepseek.com/api_keys 获取
     /// </summary>
     [Description("DeepSeek API Key")]
+    [PasswordPropertyText]
     public string DeepSeekApiKey { get; set; } = "";
 
     #endregion
@@ -56,6 +76,7 @@ public class EnvConfigModel
     /// 小米 MiMo API 密钥，从 https://platform.xiaomimimo.com 获取
     /// </summary>
     [Description("MiMo API Key")]
+    [PasswordPropertyText]
     public string MiMoApiKey { get; set; } = "";
 
     #endregion
@@ -79,11 +100,11 @@ public class EnvConfigModel
     #region 提示词压缩配置
 
     /// <summary>
-    /// 提示词压缩级别，可选值：auto / off / lite / caveman / aggressive / ultra / rtk / stacked
+    /// 提示词压缩级别，可选值：off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard
     /// 不同级别对应不同的压缩策略和 Token 节省率
     /// </summary>
-    [Description("提示词压缩级别：auto / off / lite / caveman / aggressive / ultra / rtk / stacked（默认 auto）")]
-    public string CompressionLevel { get; set; } = "auto";
+    [Description("提示词压缩级别：off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard（默认 off）")]
+    public string CompressionLevel { get; set; } = "off";
 
     #endregion
 
@@ -111,13 +132,6 @@ public class EnvConfigModel
     public int RetryMax { get; set; } = 3;
 
     /// <summary>
-    /// 重试延迟基准（毫秒），默认 100
-    /// </summary>
-    [Description("重试基础延迟，毫秒")]
-    [Range(50, 60000, ErrorMessage = "延迟必须在 50-60000ms 之间")]
-    public int RetryBaseDelayMs { get; set; } = 100;
-
-    /// <summary>
     /// 是否截断过长的工具输出，默认开启
     /// </summary>
     [Description("截断过长工具输出（默认 true）")]
@@ -138,21 +152,15 @@ public class EnvConfigModel
     public int RequestTimeoutMs { get; set; } = 120000;
 
     /// <summary>
-    /// 最大请求体字节数，默认 67108864（64MB）
+    /// 工具输出最大字符数（超过则截断），默认 12000
     /// </summary>
-    [Description("最大请求体，字节（默认 64MB）")]
-    [Range(262144, int.MaxValue, ErrorMessage = "请求体必须 >= 256KB")]
-    public int MaxRequestBodyBytes { get; set; } = 67108864;
+    [Description("工具输出最大字符数（默认 12000）")]
+    [Range(1000, int.MaxValue, ErrorMessage = "最大字符数必须 >= 1000")]
+    public int MaxToolOutputChars { get; set; } = 12000;
 
     #endregion
 
     #region 模型元数据
-
-    /// <summary>
-    /// 是否强制所有模型报告完整能力（工具调用、视觉等），默认开启
-    /// </summary>
-    [Description("强制所有模型报告完整能力")]
-    public bool ForceAllCapabilities { get; set; } = true;
 
     /// <summary>
     /// 默认上下文窗口长度（Token 数），用于在 Ollama 模型列表中展示
@@ -166,7 +174,7 @@ public class EnvConfigModel
     /// </summary>
     [Description("默认温度，留空为不设置")]
     [Range(0, 2, ErrorMessage = "温度必须在 0-2 之间")]
-    public double? DefaultTemperature { get; set; } = 1.25;
+    public double? DefaultTemperature { get; set; } = null;
 
     #endregion
 
@@ -199,6 +207,28 @@ public class EnvConfigModel
     [Description("保活最大生命周期，毫秒（默认 24h）")]
     [Range(3600000, int.MaxValue, ErrorMessage = "生命周期必须 >= 1h")]
     public int SessionKeepaliveMaxLifetimeMs { get; set; } = 86400000;
+
+    #endregion
+
+    #region 透传代理配置
+
+    /// <summary>
+    /// 透传代理上游地址 — 未匹配路由转发到此地址
+    /// </summary>
+    [Description("透传上游地址")]
+    [Url(ErrorMessage = "请输入有效的 URL")]
+    public string PassthroughBaseUrl { get; set; } = "";
+
+    #endregion
+
+    #region 安全配置
+
+    /// <summary>
+    /// 终端命令回退 — 开启后 VS 终端不可用时由服务端代为执行命令
+    /// ⚠️ 需要信任 AI 客户端，默认关闭
+    /// </summary>
+    [Description("终端命令回退（⚠️ 信任 AI 客户端时开启）")]
+    public bool TerminalFallbackEnabled { get; set; } = false;
 
     #endregion
 }

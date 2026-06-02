@@ -20,7 +20,6 @@ function _authHeaders() {
   const key = getMiMoApiKey();
   return {
     Authorization: `Bearer ${key}`,
-    "api-key": key,
   };
 }
 
@@ -31,9 +30,6 @@ let _cachedModels = null;
 const MIMO_CONTEXT_MAP = {
   "mimo-v2.5": 1048576,
   "mimo-v2.5-pro": 1048576,
-  "mimo-v2.5-tts": 262144,
-  "mimo-v2.5-tts-voiceclone": 262144,
-  "mimo-v2.5-tts-voicedesign": 262144,
 };
 
 // 从 MiMo API 获取可用模型列表
@@ -42,22 +38,30 @@ export async function getMiMoModels() {
   if (!isMiMoAvailable()) { _cachedModels = []; return []; }
 
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try { timer.unref?.(); } catch {}
     const resp = await fetch(`${MIMO_BASE_URL}/models`, {
       headers: _authHeaders(),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
 
     if (!resp.ok) {
       const body = await resp.text().catch(() => "");
       logErr(`[mimo] /models 请求失败 ${resp.status}: ${body.slice(0, 200)}`);
-      _cachedModels = [];
+      // Don't cache errors — transient failures should not permanently block retry
       return [];
     }
 
     const json = await resp.json();
     const rawData = json.data || [];
 
-    // 不做过滤——返回所有可用模型
-    _cachedModels = rawData.map(m => {
+    // 只保留 mimo-v2.5 和 mimo-v2.5-pro
+    const ALLOWED_MODELS = new Set(["mimo-v2.5", "mimo-v2.5-pro"]);
+    _cachedModels = rawData
+      .filter(m => ALLOWED_MODELS.has(m.id))
+      .map(m => {
       const prefixed = `mimo/${m.id}`;
       return {
         id: prefixed,
@@ -74,7 +78,7 @@ export async function getMiMoModels() {
     return _cachedModels;
   } catch (e) {
     logErr(`[mimo] /models 请求异常: ${e.message}`);
-    _cachedModels = [];
+    // Don't cache errors — transient failures should not permanently block retry
     return [];
   }
 }

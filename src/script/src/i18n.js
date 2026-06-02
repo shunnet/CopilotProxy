@@ -31,6 +31,7 @@ const messages = {
   // === 服务控制 ===
   serviceStopping:  { zh: "服务正在停止…",                         en: "Service stopping..." },
   serviceRestarting:{ zh: "正在重启…",                             en: "Restarting..." },
+  serviceUpdating:  { zh: "正在更新并重启…",                       en: "Updating and restarting..." },
 
   // === API 错误 ===
   apiKeyNotConfig:  { zh: "未配置 {0} API Key。",                  en: "{0} API Key not configured." },
@@ -40,11 +41,6 @@ const messages = {
   errorServiceBusy: { zh: "服务繁忙",                               en: "Service is too busy" },
   rateLimitExceeded:{ zh: "超出频率限制",                           en: "Rate limit exceeded." },
 
-  // === 模型 ===
-  dsKeyChanged:     { zh: "[deepseek] Key 已变更 — 刷新模型列表",   en: "[deepseek] Key changed — refreshing models" },
-  dsKeySetNoModels: { zh: "[deepseek] Key 已设置但无模型 — 刷新中", en: "[deepseek] Key set but no models — refreshing" },
-  mimoKeyChanged:   { zh: "[mimo] Key 已变更 — 刷新模型列表",       en: "[mimo] Key changed — refreshing models" },
-  mimoKeySetNoModels:{ zh: "[mimo] Key 已设置但无模型 — 刷新中",    en: "[mimo] Key set but no models — refreshing" },
   modelRefreshing:  { zh: "[model] 正在刷新…",                      en: "[model] Refreshing..." },
 
   // === 工具/调试 ===
@@ -138,6 +134,81 @@ const messages = {
 
   // === i18n ===
   i18nSet:          { zh: "[i18n] 语言已设置为中文",                 en: "[i18n] language set to English" },
+
+  // === 技能系统 ===
+  skillsLoaded:     { zh: "[skills] 已加载 {0} 个技能 ({1} 个域特定技能已跳过)", en: "[skills] Loaded {0} skills ({1} domain-specific skipped)" },
+  skillsDirNotFound:{ zh: "[skills] 目录未找到: {0}",               en: "[skills] directory not found: {0}" },
+  skillsScanError:  { zh: "[skills] 扫描错误: {0}",                 en: "[skills] Scan error: {0}" },
+  skillsLoadFail:   { zh: "[skills] 加载失败 {0}: {1}",             en: "[skills] Failed to load {0}: {1}" },
+  skillsActivated:  { zh: "[skills] 已激活: {0}",                    en: "[skills] Activated: {0}" },
+  skillsRefreshed:  { zh: "[skills] 技能已刷新 ({0} 个)",           en: "[skills] Skills refreshed ({0})" },
+  skillsAutoMatch:  { zh: "[skills] 自动匹配: \"{0}\" → {1}",       en: "[skills] Auto-match: \"{0}\" → {1}" },
+
+  // === Token 用量 ===
+  tokenUsage:       { zh: "[token] 请求:{0} 响应:{1} 总计:{2}",      en: "[token] request:{0} response:{1} total:{2}" },
+  tokenNoData:      { zh: "[token] 无用量数据",                      en: "[token] usage data not available" },
+  tokenNoDataReason:{ zh: "[token] 无用量数据 ({0})",                en: "[token] usage data not available ({0})" },
+
+  // === API Key 状态 ===
+  dsKeySet:         { zh: "[deepseek] Key 已设置 — 刷新模型列表",    en: "[deepseek] Key set — refreshing models" },
+  dsKeyRemoved:     { zh: "[deepseek] Key 已移除 — 刷新模型列表",    en: "[deepseek] Key removed — refreshing models" },
+  dsKeyNoModels:    { zh: "[deepseek] Key 已设置但无模型 — 刷新中",  en: "[deepseek] Key set but no models — refreshing" },
+  mimoKeySet:       { zh: "[mimo] Key 已设置 — 刷新模型列表",        en: "[mimo] Key set — refreshing models" },
+  mimoKeyRemoved:   { zh: "[mimo] Key 已移除 — 刷新模型列表",        en: "[mimo] Key removed — refreshing models" },
+  mimoKeyNoModels:  { zh: "[mimo] Key 已设置但无模型 — 刷新中",      en: "[mimo] Key set but no models — refreshing" },
+
+  // === 服务生命周期 ===
+  portInUse:        { zh: "端口 {0} 已被占用，尝试使用端口 {1}…",    en: "Port {0} in use, trying port {1}..." },
+  gracefulShutdown: { zh: "收到 {0} — 正在优雅关闭…",               en: "Received {0} — shutting down gracefully..." },
+  shutdownTimeout:  { zh: "强制退出：关闭超时",                      en: "Forced exit: shutdown timeout" },
+  terminalBlocked:  { zh: "[term] 已阻止危险命令: {0}",              en: "[term] BLOCKED dangerous cmd: {0}" },
+  terminalBlockedSafe:{ zh: "[term] 已阻止非安全命令: {0}",          en: "[term] BLOCKED non-safe cmd: {0}" },
+  terminalProxyExec:{ zh: "[term] proxy-exec: {0}",                  en: "[term] proxy-exec: {0}" },
+  terminalProxyFail:{ zh: "[term] proxy-exec 失败: {0}",             en: "[term] proxy-exec fail: {0}" },
+
+  // === 会话/循环控制 ===
+  autopilotDone:    { zh: "[autopilot] 任务已完成 — 返回硬停止",     en: "[autopilot] task already done — returning hard stop" },
+  autopilotDrain:   { zh: "[autopilot] VS 完成后 — 静默排空",        en: "[autopilot] VS post-completion — draining silently" },
+  autopilotStall:   { zh: "[LOOP-BREAK] 自动循环停滞 — {0} 次继续无工具输出", en: "[LOOP-BREAK] autopilot stall — {0} continues with no tool output" },
+  loopBreakNags429: { zh: "[LOOP-BREAK] VS 在限速后提示 {0} 次 — 返回 429", en: "[LOOP-BREAK] VS nagged {0}x after rate limit — returning 429" },
+  loopBreakNagsIdle:{ zh: "[LOOP-BREAK] VS 提示 {0} 次，LLM 空闲 — 切断会话", en: "[LOOP-BREAK] VS nagged {0}x, LLM idle — cutting session" },
+  loopBreakSelfComplete:{ zh: "[LOOP-BREAK] 切断会话 (AI 要求自身完成)", en: "[LOOP-BREAK] cutting session (AI telling itself to complete)" },
+  nagsIgnored:      { zh: "[nags] 忽略 {0} 个 VS 提示 — LLM 仍有工具调用", en: "[nags] ignoring {0} VS nags — LLM still has tool calls" },
+  nagsFiltered:     { zh: "[nags] 过滤了 {0} 个提示消息",             en: "[nags] filtered {0} nag messages" },
+
+  // === 思考/回退 ===
+  thinkFallbackFound:{ zh: "[think-fallback] 在思考中找到 {0} 个工具调用", en: "[think-fallback] found {0} tool call(s) in reasoning" },
+  thinkFallbackStreak:{ zh: "[think-fallback] 连续 {0} 次 — 切断会话", en: "[think-fallback] streak {0} — cutting session" },
+  thinkFallbackEmpty:{ zh: "[think-fallback] 连续 {0} 次: 空文本，使用思考摘要", en: "[think-fallback] streak {0}: empty text, using reasoning summary" },
+  thinkFallbackFlood:{ zh: "[think-fallback] 洪流 {0} 次停止 — 返回 503", en: "[think-fallback] flood {0} stops — returning 503" },
+
+  // === 请求/响应 ===
+  reqBodyTooLarge:  { zh: "请求体过大: {0} > {1} 字节",              en: "request body too large: {0} > {1} bytes" },
+  toolTruncation:   { zh: "[tool] 截断: {0} 消息, {1} → {2} 字符",   en: "[tool] truncation: {0} messages, {1} → {2} chars" },
+  endpoint404:      { zh: "[404] {0} {1}  UA={2}  bag={3}",          en: "[404] {0} {1} UA={2} bag={3}" },
+  completionDone:   { zh: "完成 ({0} 字符)",                          en: "completion done ({0} chars)" },
+  bareContinueReplaced:{ zh: "[autopilot] 替换裸 \"{0}\" → 继续提示", en: "[autopilot] replaced bare \"{0}\" → continue prompt" },
+  taskCompleteDropped:{ zh: "[task_complete] 丢弃 {0} 个额外工具调用: {1}", en: "[task_complete] dropping {0} extra tool call(s): {1}" },
+  workspaceSummaryStored:{ zh: "[summary] 已存储工作区摘要 ({0})",    en: "[summary] stored workspace summary ({0})" },
+  workspaceInjected: { zh: "[continuity] 注入工作区摘要 from 会话 {0}", en: "[continuity] injected workspace summary from session {0}" },
+  pagingKept:       { zh: "[paging] 保留 {0} 条消息 (丢弃 {1})",      en: "[paging] kept {0} messages (dropped {1})" },
+  debugContext:     { zh: "[context] {0}ch: {1}",                    en: "[context] {0}ch: {1}" },
+  debugToolsToVS:   { zh: "[TOOLS-TO-VS] {0}",                       en: "[TOOLS-TO-VS] {0}" },
+  debugTextToVS:    { zh: "[TEXT-TO-VS] {0}",                        en: "[TEXT-TO-VS] {0}" },
+  rateLimitSession: { zh: "[rate-limit] 会话已节流，返回 429",        en: "[rate-limit] session throttled, returning 429" },
+
+  // === 透传/代理 ===
+  passthroughBlocked:{ zh: "透传已阻止: {0}",                         en: "passthrough blocked: {0}" },
+  passthroughTimeout:{ zh: "透传超时: {0}",                           en: "passthrough timeout: {0}" },
+  passthroughError: { zh: "透传错误: {0}",                            en: "passthrough error: {0}" },
+
+  // === 启动 ===
+  bannerPlain:      { zh: "[Shunnet.top] Copilot Proxy  |  端口: {0}  |  models.dev", en: "[Shunnet.top] Copilot Proxy  |  port: {0}  |  models.dev" },
+  bannerDSModels:   { zh: "DeepSeek ({0}): {1}",                     en: "DeepSeek ({0}): {1}" },
+  bannerMiMoModels: { zh: "MiMo ({0}): {1}",                         en: "MiMo ({0}): {1}" },
+  debugToggle:      { zh: "调试 {0}",                                 en: "DEBUG {0}" },
+  skillsStartupLoad:{ zh: "[skills] {0} 个技能已加载",                en: "[skills] {0} skills loaded" },
+  skillsStartupFail:{ zh: "[skills] 加载失败: {0}",                   en: "[skills] load failed: {0}" },
 };
 
 /**
@@ -146,10 +217,10 @@ const messages = {
 export function t(key, ...args) {
   const entry = messages[key];
   let text = entry ? (entry[_lang] || entry.zh || key) : key;
-  for (let i = 0; i < args.length; i++) {
-    text = text.replace(`{${i}}`, String(args[i]));
-  }
-  return text;
+  return text.replace(/{(\d+)}/g, (match, n) => {
+    const idx = parseInt(n, 10);
+    return idx < args.length ? String(args[idx]) : match;
+  });
 }
 
 export function setLanguage(lang) {

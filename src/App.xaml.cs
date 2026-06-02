@@ -77,8 +77,15 @@ namespace Snet.CopilotProxy
         private static List<EditModel> GetEditModels() =>
         [
             new() { Name = "[ Info ]",                Color = "#4CAF50" },
-            new() { Name = "[INFO]",                  Color = "#4CAF50" },
+            new() { Name = "[INFO]",                Color = "#4CAF50" },
+            new() { Name = "[model]",                  Color = "#4CAF50" },
+            new() { Name = "[i18n]",                  Color = "#4CAF50" },
+            new() { Name = "[status]",                  Color = "#4CAF50" },
+            new() { Name = "[skills]",                  Color = "#4CAF50" },
+            new() { Name = "[token]",                  Color = "#4CAF50" },
             new() { Name = "[ Error ]",               Color = "#F44336" },
+            new() { Name = "错误",               Color = "#F44336" },
+            new() { Name = "Error",               Color = "#F44336" },
             new() { Name = "异常",                    Color = "#F44336" },
             new() { Name = "Exception",               Color = "#F44336" },
             new() { Name = "TRUE",                    Color = "#4CAF50" },
@@ -86,6 +93,11 @@ namespace Snet.CopilotProxy
             new() { Name = "FALSE",                   Color = "#F44336" },
             new() { Name = "[ Console ]",             Color = "#FBC31D" },
             new() { Name = "[ Shunnet.top ]",         Color = "#459DBA" },
+            new() { Name = "[Shunnet.top]",         Color = "#459DBA" },
+            new() { Name = "[MEDIUM]",         Color = "#459DBA" },
+            new() { Name = "DeepSeek",         Color = "#14B8FF" },
+            new() { Name = "MiMo",         Color = "#30C5C7" },
+             new() { Name = "new session",         Color = "#FAC21E" },
         ];
 
         #endregion

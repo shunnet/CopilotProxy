@@ -40,7 +40,7 @@ if (typeof ReadableStream === 'undefined') {
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { config, getModels, initModels, resolveModel, resolveModelMetadata, isKnownModel, chatCompletion, APIError, isSeparator, isDeepSeekModel, isMiMoModel, SEP_DEEPSEEK, SEP_MIMO, refreshModels, bgFetchDone, fetchWithAgent, getThinkingModes, parseThinkingMode } from "./snet-handle.js";
-import { check as cacheCheck, store as cacheStore, cacheKey } from "./cache.js";
+
 import { ModelConcurrencyManager, RateLimitError, truncateToolMessagesInPayload, checkRequestBodySize } from "./concurrency.js";
 import { compactIdentity, compactToolInstructions, compactOllamaToolInstructions, compactCodeCompletionPrompt, compressMessages, compressHistory } from "./token-optimizer.js";
 import { trackSession, shutdown as keepaliveShutdown, stats as keepaliveStats } from "./session-keepalive.js";
@@ -50,6 +50,13 @@ import { isDeepSeekAvailable } from "./deepseek-client.js";
 import { isMiMoAvailable } from "./mimo-client.js";
 import { t, setLanguage, getLanguage } from "./i18n.js";
 import { applyToolDefaults, normalizeToolType } from "./tool-schemas.js";
+import { _stripOrphanedToolCalls, _toolNames, _stripAllToolCalls, checkOrphanToolMessage, validateMessages, mergeConsecutiveMessages } from "./message-pipeline.js";
+import { extractToolCalls, normalizeToolCall, getWorkspaceRoot, extractVSContext, hasXMLToolCalls } from "./tool-extractor.js";
+import { createReasoningContext, _assistantNeedsReasoning, _crossReqReasoningCache, clearConvReasoning } from "./reasoning-cache.js";
+import { _sessionRegistry, _workspaceSessions, _workspaceSummaries, _taskCompletedSessions, _recentlyCompleted, _rateLimitedSessions, _sessionCounter, _summarizeCompletedTask, setSessionCounter, sessionLog } from "./session-tracker.js";
+import { _simStream, _foldReasoningIntoContent, addReasoningAliases, reconstructToolCalls, createXMLAwareStreamAccumulator } from "./stream-handler.js";
+import { embedReasoning, extractReplayedReasoning } from "./reasoning-replay.js";
+import { loadSkills, buildSkillSystemPrompt, refreshSkills, matchSkills, buildSkillActivationPrompt } from "./skill-loader.js";
 
 // ── Service command routing (early exit for install/uninstall) ──
 {
@@ -63,6 +70,7 @@ const _isPlainMode = process.argv.includes("--plain") || Bun.env.SNET_PLAIN === 
 
 // 构建日期文件（由构建脚本写入）
 const VERSION_FILE = ".version";
+const SNET_VERSION = "420.96.00";
 
 // ── Logging ──
 const logReq = (c) => {
@@ -83,47 +91,80 @@ const err = (msg) => logErr(msg);
   try {
     const fs = await import("node:fs");
     if (!fs.existsSync(".env")) {
-      fs.writeFileSync(".env", `# === 服务器配置 ===
-DEFAULT_MODEL=ds/deepseek-v4-pro
-SERVER_PORT=11434
+      fs.writeFileSync(".env", `# ============================================================
+#  Snet Copilot Proxy — Configuration
+# ============================================================
+#  所有配置均设有合理默认值，按需修改即可。
+#  All settings have sensible defaults. Only change what you need.
+# ============================================================
 
-# === DeepSeek API ===
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-DEEPSEEK_API_KEY=
+# --- Model Selection ---
+# DEFAULT_MODEL=ds/deepseek-v4-pro
 
-# === 小米 MiMo API ===
-MIMO_BASE_URL=https://api.xiaomimimo.com/v1
-MIMO_API_KEY=
+# --- Server ---
+# SERVER_HOST=127.0.0.1
+# SERVER_PORT=11434
 
-# === 日志 ===
-REQUEST_LOG=true
-DEBUG=false
+# --- DeepSeek API ---
+# DEEPSEEK_BASE_URL=https://api.deepseek.com
+# DEEPSEEK_API_KEY=
 
-# === 提示词压缩 ===
-COMPRESSION_LEVEL=auto
+# --- MiMo API ---
+# MIMO_BASE_URL=https://api.xiaomimimo.com/v1
+# MIMO_API_KEY=
 
-# === 并发与速率限制 ===
-CONCURRENCY_THINKING=1
-CONCURRENCY_STANDARD=3
-RETRY_MAX=3
-RETRY_BASE_DELAY_MS=100
-TRUNCATE_TOOL_OUTPUT=true
-THINKING_TIMEOUT_MS=120000
-REQUEST_TIMEOUT_MS=120000
-MAX_REQUEST_BODY_BYTES=67108864
+# --- Logging ---
+# REQUEST_LOG=true
+# DEBUG=false              # set to "true" or "1" to enable debug output
 
-# === 模型元数据 ===
-FORCE_ALL_CAPABILITIES=true
-DEFAULT_CONTEXT_LENGTH=131072
-DEFAULT_TEMPERATURE=1.25
+# --- Compression (off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard) ---
+# COMPRESSION_LEVEL=off
 
-# === 会话保活 ===
-SESSION_KEEPALIVE_ENABLED=true
-SESSION_KEEPALIVE_INTERVAL_MS=120000
-SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=600000
-SESSION_KEEPALIVE_MAX_LIFETIME_MS=86400000
+# --- Concurrency & Rate Limiting ---
+# CONCURRENCY_THINKING=1
+# CONCURRENCY_STANDARD=3
+# RETRY_MAX=3
+# RETRY_BASE_DELAY_MS=100
+# THINKING_TIMEOUT_MS=120000
+# REQUEST_TIMEOUT_MS=120000
+# MAX_REQUEST_BODY_BYTES=67108864
+
+# --- Tool Output Truncation ---
+# TRUNCATE_TOOL_OUTPUT=true
+# MAX_TOOL_OUTPUT_CHARS=12000
+# TOOL_OUTPUT_HEAD_CHARS=6000
+# TOOL_OUTPUT_TAIL_CHARS=2000
+# TOOL_OUTPUT_KEEP_COUNT=3
+
+# --- Context & Messages ---
+# DEFAULT_CONTEXT_LENGTH=131072
+# MESSAGES_PAGING=0       # set >0 to keep only last N messages per request
+
+# --- Model Capabilities ---
+# FORCE_ALL_CAPABILITIES=true
+# DEFAULT_TEMPERATURE=     # leave empty to use model default
+
+# --- Session Keepalive ---
+# SESSION_KEEPALIVE_ENABLED=true
+# SESSION_KEEPALIVE_INTERVAL_MS=120000
+# SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=600000
+# SESSION_KEEPALIVE_MAX_LIFETIME_MS=86400000
+
+# --- Skills ---
+# SKILLS_DIR=              # custom path to skills directory
+
+# --- Language (zh / en) ---
+# SNET_LANGUAGE=zh
+
+# --- Passthrough Proxy (forward unmatched paths to upstream) ---
+# PASSTHROUGH_BASE_URL=    # e.g. https://your-upstream-api.com
+# PASSTHROUGH_PREFIXES=/v1
+# PASSTHROUGH_TIMEOUT_MS=30000
+
+# --- Terminal Fallback (⚠️ enable only if you trust the AI client) ---
+# TERMINAL_FALLBACK_ENABLED=false
 `);
-      log("已创建 .env");
+      log(t("creatingEnv"));
     }
   } catch { /* fs模块不可用，忽略 */ }
 })();
@@ -131,15 +172,8 @@ SESSION_KEEPALIVE_MAX_LIFETIME_MS=86400000
 // No API key needed — free tier works without
 
 const app = new Hono();
-function _stripAllToolCalls(messages) {
-  if (!messages?.length) return messages || [];
-  return messages.map(m => {
-    if (m.role === "assistant" && m.tool_calls?.length) {
-      return { ...m, content: m.content || "", tool_calls: undefined };
-    }
-    return m;
-  });
-}
+// NOTE: _stripAllToolCalls, _stripOrphanedToolCalls, _toolNames, addReasoningAliases,
+// _foldReasoningIntoContent, _simStream are now imported from extracted modules above.
 
 // ── 辅助函数 ──
 
@@ -157,70 +191,46 @@ async function getBody(c) {
   try {
     const text = await c.req.text();
     return text ? JSON.parse(text) : {};
-  } catch {
+  } catch (e) {
+    // M7: Log parse failures instead of silently returning {}
+    debug(`[body] parse error: ${e.message?.slice(0, 100)}`);
     return {};
   }
 }
 
-// Pre-flight: strip orphaned tool_calls from assistant messages that have no
-// matching tool results, AND strip orphaned tool messages that have no matching
-// assistant with tool_calls. Prevents DeepSeek validation errors both directions.
-function _stripOrphanedToolCalls(messages) {
-  if (!messages?.length) return { messages, stripped: 0 };
-  let stripped = 0;
+// NOTE: _stripOrphanedToolCalls is now imported from message-pipeline.js
 
-  // First pass: strip orphaned tool_calls from assistant messages
-  let result = messages.map(m => {
-    if (m.role !== "assistant" || !m.tool_calls?.length) return m;
+// ── Shared display helpers (H23: extracted from duplicate inline definitions) ──
+const SHORT_TAG = { LOW: "LO", MEDIUM: "MD", HIGH: "HI", MAXIMUM: "MX", XHIGH: "X" };
+const VSC_THINK_TAG = { LOW: "/1_(low)", MEDIUM: "/2_(medium)", HIGH: "/3_high", MAXIMUM: "/4_(maximum)", XHIGH: "/4_(xhigh)" };
 
-    const callIds = m.tool_calls.map(tc => tc.id);
-    const matched = new Set();
-    // Scan forward from this assistant for matching tool results
-    const asstIdx = messages.indexOf(m);
-    for (let j = asstIdx + 1; j < messages.length; j++) {
-      const t = messages[j];
-      if (t.role === "tool" && t.tool_call_id && callIds.some(cid => cid === t.tool_call_id)) {
-        matched.add(t.tool_call_id);
-      }
-    }
+function _thin(name, vsc) {
+  if (vsc) return name;
+  return name.length > 20 ? name.replace(/ /g, " ") : name;
+}
 
-    if (matched.size === 0) {
-      // All tool calls are orphaned — strip them entirely
-      stripped++;
-      const { tool_calls, ...rest } = m;
-      return { ...rest, content: m.content || "" };
-    } else if (matched.size < callIds.length) {
-      // Some tool calls have results, some don't — keep only the matched ones
-      stripped++;
-      const names = m.tool_calls.filter(tc => !matched.has(tc.id)).map(tc => tc.function?.name || "?");
-      log(`  [tool] stripping ${callIds.length - matched.size} orphaned tool calls: ${names.join(", ")}`);
-      return { ...m, tool_calls: m.tool_calls.filter(tc => matched.has(tc.id)) };
-    }
+function _vsTag(baseName, mode, vsc) {
+  if (vsc) return ` [${mode}]`;
+  const full = ` [${mode}]`;
+  if ((baseName + full).length <= 20) return full;
+  const short = SHORT_TAG[mode];
+  if (short) return ` [${short}]`;
+  return full;
+}
 
-    return m;
-  });
+// ── OpenAI response builder ──
 
-  // Second pass: strip orphaned tool messages that have no matching assistant with tool_calls
-  const before = result.length;
-  result = result.filter(m => {
-    if (m.role !== "tool") return true;
-    // Walk backwards to find a preceding assistant with matching tool_calls
-    const idx = result.indexOf(m);
-    for (let j = idx - 1; j >= 0; j--) {
-      const prev = result[j];
-      if (prev.role === "assistant" && prev.tool_calls?.length) {
-        if (prev.tool_calls.some(tc => tc.id === m.tool_call_id)) return true;
-      }
-      if (prev.role !== "assistant" && prev.role !== "tool") break;
-    }
-    stripped++;
-    return false;
-  });
-  const orphanedTools = before - result.length;
-  if (orphanedTools) debug(`  [tool] stripped ${orphanedTools} orphaned tool message${orphanedTools !== 1 ? "s" : ""}`);
-
-  if (stripped) debug(`  [tool] stripped orphaned tool calls/messages from ${stripped} total`);
-  return { messages: result, stripped };
+// ── Special token sanitization ──
+function sanitizeContent(content) {
+  if (typeof content !== "string") return content;
+  return content
+    .replace(/<\|im_start\|>[^\n]*/gi, "")
+    .replace(/<\|im_end\|>/gi, "")
+    .replace(/<\|endoftext\|>/gi, "")
+    .replace(/<\|fim_prefix\|>/gi, "")
+    .replace(/<\|fim_suffix\|>/gi, "")
+    .replace(/<\|fim_middle\|>/gi, "")
+    .trim();
 }
 
 const oaiResp = (content, tool_calls, finish_reason, model, usage) => {
@@ -238,7 +248,6 @@ const oaiResp = (content, tool_calls, finish_reason, model, usage) => {
 };
 
 let _forceClient = null; // debug: ?src=vscode|vs|vsi|sql
-let _detectedClient = null; // resolved client for logging
 
 const isVSCode = (c) => {
   if (_forceClient) return _forceClient === "vscode";
@@ -289,30 +298,16 @@ function normalizeOpenAIParams(body) {
   return n;
 }
 
-// ── Special token sanitization ──
-function sanitizeContent(content) {
-  if (typeof content !== "string") return content;
-  return content
-    .replace(/<\|im_start\|>[^\n]*/gi, "")
-    .replace(/<\|im_end\|>/gi, "")
-    .replace(/<\|endoftext\|>/gi, "")
-    .replace(/<\|fim_prefix\|>/gi, "")
-    .replace(/<\|fim_suffix\|>/gi, "")
-    .replace(/<\|fim_middle\|>/gi, "")
-    .trim();
-}
-
 // ── Think tag processor ──
 function processThinkTags(text) {
   if (!text || typeof text !== "string") return { content: text || "", reasoning: null };
+  // M10: Single-pass regex replace (was O(n²) with loop + replace)
   const thinkRe = /<think>\s*([\s\S]*?)\s*<\/think>/gi;
   let reasoning = "";
-  let clean = text;
-  let match;
-  while ((match = thinkRe.exec(text)) !== null) {
-    reasoning += (reasoning ? "\n" : "") + match[1].trim();
-    clean = clean.replace(match[0], "");
-  }
+  let clean = text.replace(thinkRe, (match, content) => {
+    reasoning += (reasoning ? "\n" : "") + content.trim();
+    return "";
+  });
   clean = clean.replace(/<\/?think>/gi, "").trim();
   return {
     content: sanitizeContent(clean),
@@ -320,73 +315,21 @@ function processThinkTags(text) {
   };
 }
 
-// ── Reasoning field aliasing ──
-function addReasoningAliases(delta, reasoningText) {
-  if (!reasoningText) return delta;
-  if (_displayReasoning) return delta; // reasoning already folded into content, don't double-expose
-  delta.reasoning = reasoningText;
-  delta.reasoning_content = reasoningText;
-  delta.reasoning_text = reasoningText;
-  delta.thinking = reasoningText;
-  return delta;
-}
+// NOTE: addReasoningAlias, _foldReasoningIntoContent, _simStream are now imported from stream-handler.js
+// NOTE: _crossReqReasoningCache, createReasoningContext, _assistantNeedsReasoning imported from reasoning-cache.js
+// NOTE: _sessionRegistry, _workspaceSessions, _workspaceSummaries, _taskCompletedSessions, _recentlyCompleted, _rateLimitedSessions, _sessionCounter imported from session-tracker.js
+// NOTE: _stripOrphanedToolCalls, _toolNames, _stripAllToolCalls, checkOrphanToolMessage imported from message-pipeline.js
+// NOTE: extractToolCalls, normalizeToolCall, getWorkspaceRoot, extractVSContext, _fixPathEscapes imported from tool-extractor.js
 
-async function _simStream(w, base, hasTools, toolCalls, text, reasoningContent) {
-  if (reasoningContent) {
-    // When display_reasoning is on, fold reasoning into content as first delta
-    if (_displayReasoning) {
-      const folded = _foldReasoningIntoContent(reasoningContent, "");
-      await w({ ...base, choices: [{ index: 0, delta: { content: folded }, finish_reason: null }] });
-    } else {
-      let dr = { content: "" };
-      addReasoningAliases(dr, reasoningContent);
-      await w({ ...base, choices: [{ index: 0, delta: dr, finish_reason: null }] });
-    }
-  }
-  if (hasTools) {
-    for (let i = 0; i < toolCalls.length; i++) {
-      const tc = toolCalls[i];
-      await w({ ...base, choices: [{ index: 0, delta: { tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: tc.function.arguments } }] }, finish_reason: null }] });
-    }
-    await w({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
-  } else {
-    const lines = (text || "").split("\n");
-    let buffer = "";
-    for (const line of lines) {
-      if (buffer.length + line.length + 1 > 200 && buffer) {
-        await w({ ...base, choices: [{ index: 0, delta: { content: buffer + "\n" }, finish_reason: null }] });
-        buffer = line;
-      } else {
-        buffer += (buffer ? "\n" : "") + line;
-      }
-    }
-    if (buffer) await w({ ...base, choices: [{ index: 0, delta: { content: buffer }, finish_reason: null }] });
-    await w({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
-  }
-}
-
-// Reasoning content cache — bridges across requests within same session
-// Keyed by conversation ID (first user msg + model + workspace) to prevent cross-session poisoning
-// Also keyed by workspace root for cross-session continuity (new session in same workspace
-// can read reasoning from a prior session — TaskSync-inspired conversation continuity)
-const _crossReqReasoningCache = new Map(); // convId:contentHash → reasoningContent
-const _reasoningCacheMaxEntries = 5000; // max entries before LRU eviction
-
-// ── Thinking display: mirror reasoning into Cursor/VS-visible markdown blocks ──
 const _displayReasoning = (process.env.DISPLAY_REASONING || "false").toLowerCase() === "true";
-
-// 工具调用错误计数器：连续 3 次 400 错误后剥离 tool_calls 重试
 let _tool400Streak = 0;
+let _skillsLoaded = 0;
+let _skillNames = [];
+let _skillsCache = []; // full skill objects for auto-matching
+const _skillsMatched = new Map(); // sessionKey → [skillNames], avoids re-matching per request
 const _collapsibleReasoning = (process.env.COLLAPSIBLE_REASONING || "true").toLowerCase() !== "false";
 const _THINKING_BLOCK_START = _collapsibleReasoning ? "<details>\n<summary>snet Thinking</summary>\n\n" : "<!-- snet-thinking -->\n";
 const _THINKING_BLOCK_END = _collapsibleReasoning ? "\n</details>\n\n" : "\n<!-- /snet-thinking -->\n\n";
-
-function _foldReasoningIntoContent(reasoningText, existingContent) {
-  if (!reasoningText) return existingContent || "";
-  return _THINKING_BLOCK_START + reasoningText + _THINKING_BLOCK_END + (existingContent || "");
-}
-
-// Strip previously-displayed thinking blocks from assistant content (echoed back by VS/Cursor)
 const _THINKING_STRIP_RE = new RegExp(
   `<details\\b[^>]*>\\s*<summary\\b[^>]*>\\s*snet Thinking\\s*</summary>[\\s\\S]*?</details>\\s*|<!-- snet-thinking -->\\s*[\\s\\S]*?\\s*<!-- /snet-thinking -->\\s*`,
   "gi"
@@ -396,16 +339,11 @@ function _stripDisplayedThinking(content) {
   return content.replace(_THINKING_STRIP_RE, "").trimStart();
 }
 
-// Session tracking — detect and number distinct conversation contexts
-const _sessionRegistry = new Map(); // convId → { id, clientTag, createdAt, workspaceRoot }
-// Workspace continuity — track most recent session per workspace+model for cross-session context
-const _workspaceSessions = new Map(); // `${workspaceRoot}|${model}` → { convId, sessionId, lastSeen, clientTag }
-// Workspace summaries — compact task-completion summaries to inject into future sessions
-const _workspaceSummaries = new Map(); // workspaceRoot → { summary: string, timestamp, sessionId, model }
-const _taskCompletedSessions = new Map(); // convId → true (set when LLM finishes task_complete naturally)
-const _recentlyCompleted = new Map(); // convId → timestamp (set after hard stop, drains next VS follow-up)
-const _rateLimitedSessions = new Map();     // convId → { at: timestamp } (set when upstream returns 429)
-let _sessionCounter = 0;
+// NOTE: All helper functions below (sanitizeContent, processThinkTags, oaiResp, apiErr, etc.)
+// are kept in server.js. The extracted modules (message-pipeline.js, tool-extractor.js,
+// reasoning-cache.js, session-tracker.js, stream-handler.js) contain the shared logic.
+// The duplicate inline definitions that were previously here (lines 278-mid) have been
+// replaced with imports from those modules at the top of this file.
 
 // 定期清理过期会话条目（24 小时 TTL），防止长期运行的服务器内存泄漏
 const _SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -426,393 +364,25 @@ setInterval(() => {
   for (const [k, v] of _rateLimitedSessions) {
     if (v.at < cutoff) _rateLimitedSessions.delete(k);
   }
+  // Clean up stale skill match cache entries
+  for (const k of _skillsMatched.keys()) {
+    // Remove entries not seen recently (no associated session registry entry)
+    if (!_sessionRegistry.has(k) && !_workspaceSessions.has(k)) _skillsMatched.delete(k);
+  }
+  // Hard cap at 5000 to prevent unbounded growth
+  if (_skillsMatched.size > 5000) {
+    const extra = _skillsMatched.size - 1000;
+    const keys = [..._skillsMatched.keys()].slice(0, extra);
+    for (const k of keys) _skillsMatched.delete(k);
+  }
 }, 10 * 60 * 1000).unref();
 
-function _convId(messages, model, workspaceRoot) {
-  const preAssistant = [];
-  for (const m of messages) {
-    const role = (m.role || "").toLowerCase().trim();
-    if (role === "assistant" || role === "tool") break;
-    if (role === "user") preAssistant.push(typeof m.content === "string" ? m.content : JSON.stringify(m.content));
-  }
-  const anchor = preAssistant.join("\n") + "|" + (workspaceRoot || "") + "|" + (model || "");
-  let h = 5381;
-  for (let i = 0; i < anchor.length; i++) h = ((h << 5) + h + anchor.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36);
-}
+// NOTE: _convId, _startPrompt, _sha256, _normalizeToolCallForSig, _toolCallSignature,
+// _toolCallIds, _toolCallNames, _messageSignature, _msgHash, _assistantNeedsReasoning,
+// createReasoningContext, _summarizeCompletedTask are now imported from reasoning-cache.js
+// and session-tracker.js. The old inline definitions below have been removed.
 
-function _startPrompt(messages) {
-  const preAssistant = [];
-  for (const m of messages) {
-    const role = (m.role || "").toLowerCase().trim();
-    if (role === "assistant" || role === "tool") break;
-    if (role === "user") preAssistant.push(typeof m.content === "string" ? m.content : JSON.stringify(m.content));
-  }
-  return preAssistant.join("\n");
-}
-
-// ── Task completion summary ──
-// When LLM calls task_complete, boil down tool calls + results into a compact
-// instructional summary. Strips raw code/tool output, keeps only findings and
-// actions the LLM can parse as instructions.
-function _summarizeCompletedTask(messages) {
-  const findings = [];
-  const filesModified = new Set();
-  const filesRead = new Set();
-  let lastAssistantText = "";
-
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.role === "assistant") {
-      // Collect tool calls
-      const tcs = m.tool_calls || [];
-      for (const tc of tcs) {
-        const fn = tc.function || {};
-        const name = fn.name || "";
-        let args = {};
-        try { args = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : (fn.arguments || {}); } catch {}
-        if (name === "create_file" || name === "write_to_file" || name === "write_file") {
-          if (args.filePath || args.path || args.filename) filesModified.add(args.filePath || args.path || args.filename);
-        } else if (name === "replace_in_file" || name === "replace_string_in_file" || name === "multi_replace_string_in_file") {
-          if (args.filePath || args.path) filesModified.add(args.filePath || args.path);
-        } else if (name === "remove_file" || name === "delete_file") {
-          if (args.filePath || args.path) filesModified.add(args.filePath || args.path);
-        } else if (name === "read_file" || name === "get_file" || name === "open_file") {
-          if (args.filePath || args.path || args.filename) filesRead.add(args.filePath || args.path || args.filename);
-        } else if (name === "grep_search" || name === "search_content" || name === "file_search") {
-          const q = args.query || args.pattern || args.search || "";
-          if (q) findings.push(`searched for "${q.slice(0, 80)}"`);
-        } else if (name === "find_symbol" || name === "search_symbol") {
-          const sym = args.symbolName || args.name || "";
-          if (sym) findings.push(`looked up symbol "${sym}"`);
-        } else if (name === "run_command_in_terminal" || name === "execute_command") {
-          const cmd = args.command || args.cmd || "";
-          if (cmd) findings.push(`ran: ${cmd.slice(0, 100)}`);
-        } else if (name === "task_complete" || name === "start_modernization") {
-          // skip — this is the completion marker itself
-        } else {
-          findings.push(`used ${name}()`);
-        }
-      }
-      // Capture assistant text for context
-      if (typeof m.content === "string" && m.content.trim()) {
-        lastAssistantText = m.content.trim().split("\n").filter(l => l.trim()).slice(0, 3).join(" ");
-      }
-    } else if (m.role === "tool") {
-      // Boil down tool results to key findings
-      const content = typeof m.content === "string" ? m.content : "";
-      if (!content) continue;
-      // Extract file paths mentioned in results
-      const pathRe = /([\w./\\-]+\.(?:js|ts|tsx|jsx|cs|py|java|go|rs|cpp|c|h|hpp|css|html|json|xml|yaml|yml|md|sql|sh|bat|cmd|ps1))/gi;
-      let match;
-      while ((match = pathRe.exec(content)) !== null) {
-        filesRead.add(match[1]);
-      }
-      // Extract error mentions
-      const errRe = /Error[:\s]+([^\n]{10,120})/g;
-      while ((match = errRe.exec(content)) !== null) {
-        findings.push(`error: ${match[1].trim().slice(0, 120)}`);
-      }
-    }
-  }
-
-  // Build compact summary
-  const parts = [];
-  if (filesModified.size > 0) parts.push(`Modified: ${[...filesModified].join(", ")}`);
-  if (filesRead.size > 0) parts.push(`Read: ${[...filesRead].slice(0, 8).join(", ")}${filesRead.size > 8 ? ` (+${filesRead.size - 8} more)` : ""}`);
-  if (findings.length > 0) parts.push(`Actions: ${findings.join("; ")}`);
-  if (lastAssistantText) parts.push(`Conclusion: ${lastAssistantText.slice(0, 300)}`);
-
-  return parts.length > 0 ? parts.join(". ") : "";
-}
-
-// ── Reasoning cache helpers (multi-tier key system, inspired by yxlao/deepseek-cursor-proxy) ──
-function _sha256(data) {
-  // Simple yet effective hash for cache key generation (not cryptographic)
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
-  for (let i = 0; i < data.length; i++) {
-    const ch = data.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  const combined = (h1 >>> 0).toString(16) + (h2 >>> 0).toString(16);
-  return combined;
-}
-
-function _normalizeToolCallForSig(tc) {
-  if (!tc || typeof tc !== "object") return null;
-  const fn = tc.function || {};
-  const args = typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments || {});
-  return { type: tc.type || "function", function: { name: fn.name || "", arguments: args } };
-}
-
-function _toolCallSignature(tc) {
-  const n = _normalizeToolCallForSig(tc);
-  if (!n) return "";
-  return _sha256(JSON.stringify(n));
-}
-
-function _toolCallIds(msg) {
-  const ids = [];
-  for (const tc of msg?.tool_calls || []) {
-    if (tc && tc.id) ids.push(String(tc.id));
-  }
-  return ids;
-}
-
-function _toolCallNames(msg) {
-  const names = [];
-  for (const tc of msg?.tool_calls || []) {
-    const n = tc?.function?.name || tc?.name;
-    if (n) names.push(String(n));
-  }
-  return names;
-}
-
-// 从消息数组中提取所有工具名称（用于日志/错误报告）
-function _toolNames(messages) {
-  const names = [];
-  for (const m of messages || []) {
-    if (m.role === "assistant" && m.tool_calls?.length) {
-      for (const tc of m.tool_calls) {
-        const n = tc?.function?.name || tc?.name;
-        if (n && !names.includes(n)) names.push(String(n));
-      }
-    }
-  }
-  return names.join(", ") || "(none)";
-}
-
-function _messageSignature(msg) {
-  const toolCalls = (msg?.tool_calls || []).map(_normalizeToolCallForSig).filter(Boolean);
-  const payload = {
-    content: typeof msg?.content === "string" ? msg.content : (msg?.content != null ? JSON.stringify(msg.content) : ""),
-    tool_calls: toolCalls,
-  };
-  return _sha256(JSON.stringify(payload));
-}
-
-function _assistantNeedsReasoning(msg, priorMessages) {
-  if (msg?.tool_calls?.length) return true;
-  for (let i = priorMessages.length - 1; i >= 0; i--) {
-    const role = priorMessages[i]?.role;
-    if (role === "tool") return true;
-    if (role === "user" || role === "system") return false;
-  }
-  return false;
-}
-
-function _msgHash(msg) {
-  if (msg.content != null) {
-    const c = (typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content))
-      .replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\s+/g, " ").trim();
-    return c.slice(0, 300);
-  }
-  if (msg.tool_calls?.length) {
-    const tc = msg.tool_calls[0];
-    return (tc.function?.name || tc.name || "") + ":" + ((tc.function?.arguments && typeof tc.function.arguments === "string") ? tc.function.arguments.replace(/\s+/g, "").slice(0, 100) : "");
-  }
-  return "";
-}
-
-// Create per-request reasoning context — isolates concurrent sessions
-function createReasoningContext(messages, model, workspaceRoot, clientTag, provider, thinkingTag) {
-  const conv = _convId(messages, model, workspaceRoot);
-  const fifo = [];
-  let cursor = 0;
-
-  // ── Workspace continuity detection ──
-  let effectiveWorkspace = workspaceRoot;
-  // Fallback: if no workspace detected, inherit from the most recent session with same client family
-  // No time limit — workspace persists across the server lifetime
-  if (!effectiveWorkspace && clientTag) {
-    const family = clientTag.replace(/_.*$/, ""); // "vsi_e-18.7.0" → "vsi"
-    for (const [, entry] of [..._sessionRegistry].reverse()) {
-      const entryFamily = (entry.clientTag || "").replace(/_.*$/, "");
-      if (entryFamily === family && entry.workspaceRoot) {
-        effectiveWorkspace = entry.workspaceRoot;
-        debug(`[session] inherited workspace "${effectiveWorkspace}" from session ${entry.id}`);
-        break;
-      }
-    }
-  }
-  const wsKey = effectiveWorkspace ? `${effectiveWorkspace}|${model}` : null;
-  const wsPrev = wsKey ? _workspaceSessions.get(wsKey) : null;
-  const curStartPrompt = _startPrompt(messages);
-  const isContinuation = wsPrev && wsPrev.convId !== conv && wsPrev.startPrompt === curStartPrompt; // different conversation, same workspace+model+startPrompt
-
-  let sessionEntry = _sessionRegistry.get(conv);
-  let reusedExisting = false;
-  const isNewSession = !sessionEntry;
-  if (!sessionEntry) {
-    if (isContinuation) {
-      // Reuse the previous session ID — the old session is gone, so this session
-      // continues as the same number instead of getting a new one.
-      _sessionCounter = wsPrev.sessionId;
-      sessionEntry = { id: _sessionCounter, clientTag, createdAt: new Date().toISOString(), workspaceRoot: effectiveWorkspace, lastRequestTime: 0, cacheHitStreak: 0, thinkFallbackStreak: 0, stopCount: 0 };
-      _sessionRegistry.set(conv, sessionEntry);
-      const contModel = (model || "").startsWith(`${provider}/`) ? model : `${provider}/${model}`;
-      debug(`\x1b[36mcontinued session ${_sessionCounter} \x1b[90m(was session ${wsPrev.sessionId}, \x1b[0m${clientTag}\x1b[90m, \x1b[0m${contModel}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
-      debug(`[session] NEW convId=${conv} wsRoot=${effectiveWorkspace || "(empty)"}`);
-    } else {
-      _sessionCounter++;
-      sessionEntry = { id: _sessionCounter, clientTag, createdAt: new Date().toISOString(), workspaceRoot: effectiveWorkspace, lastRequestTime: 0, cacheHitStreak: 0, thinkFallbackStreak: 0, stopCount: 0 };
-      _sessionRegistry.set(conv, sessionEntry);
-      const modelLabel = (model || "").startsWith(`${provider}/`) ? model : `${provider}/${model}`;
-      log(`\x1b[36mnew session ${_sessionCounter} \x1b[90m(\x1b[0m${clientTag}\x1b[90m, \x1b[0m${modelLabel}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
-      debug(`[session] NEW convId=${conv} wsRoot=${effectiveWorkspace || "(empty)"}`);
-    }
-  } else if (!reusedExisting) {
-    debug(`[session] REUSE convId=${conv} sessionId=${sessionEntry.id}`);
-  } else {
-    const reuseModel = (model || "").startsWith(`${provider}/`) ? model : `${provider}/${model}`;
-    debug(`\x1b[36mcontinued session ${sessionEntry.id} \x1b[90m(same client, active session reused, \x1b[0m${clientTag}\x1b[90m, \x1b[0m${reuseModel}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
-  }
-
-  // Update workspace registry (always — tracks the most recent session per workspace+model)
-  if (wsKey) {
-    _workspaceSessions.set(wsKey, { convId: conv, sessionId: sessionEntry.id, lastSeen: new Date().toISOString(), clientTag, startPrompt: curStartPrompt });
-  }
-
-  const sessionId = sessionEntry.id;
-  const tagPrefix = `\x1b[35m${clientTag}\x1b[0m`;
-  const sessionPrefix = `${tagPrefix}[\x1b[36m${sessionId}\x1b[0m]`;
-
-  // Rapid-request loop detection: if requests come within 1500ms, count as rapid
-  const now = Date.now();
-  const rapidGap = now - (sessionEntry.lastRequestTime || 0);
-  sessionEntry.lastRequestTime = now;
-  const isRapid = rapidGap > 0 && rapidGap < 1500;
-
-  const prefixedConv = (key) => `c:${conv}:${key}`;
-  // Workspace-scoped cache key — allows reasoning lookup across sessions in same workspace
-  const prefixedWs = wsKey ? (key) => `w:${wsKey}:${key}` : null;
-
-  function seslog(msg) {
-    log(`${sessionPrefix} ${msg}`);
-  }
-
-  return {
-    conv,
-    sessionId,
-    isNew: isNewSession,
-    sessionPrefix,
-    seslog,
-    workspaceContinuity: isContinuation ? { previousSessionId: wsPrev.sessionId, workspaceRoot } : null,
-    reset() { cursor = 0; },
-    cache(msg, mdl, reasoning) {
-      if (!reasoning) return;
-      fifo.push(reasoning);
-      if (fifo.length > 50) fifo.shift();
-      // Multi-tier key system (inspired by yxlao/deepseek-cursor-proxy):
-      // Tier 1: Message signature (content + tool_calls canonicalized)
-      // Tier 2: Tool call IDs (survives argument re-ordering)
-      // Tier 3: Tool call signatures (survives ID changes)
-      // Tier 4: Tool names (recovery of last resort — catches interrupted streams)
-      const sig = _messageSignature(msg);
-      if (sig) {
-        _crossReqReasoningCache.set(prefixedConv(`sig:${sig}`), reasoning);
-        if (prefixedWs) _crossReqReasoningCache.set(prefixedWs(`sig:${sig}`), reasoning);
-        _crossReqReasoningCache.set(`g:${mdl}:sig:${sig}`, reasoning);
-      }
-      const ids = _toolCallIds(msg);
-      for (const id of ids) {
-        _crossReqReasoningCache.set(prefixedConv(`tc:${id}`), reasoning);
-        if (prefixedWs) _crossReqReasoningCache.set(prefixedWs(`tc:${id}`), reasoning);
-      }
-      const tcs = msg.tool_calls || [];
-      for (const tc of tcs) {
-        const tcsig = _toolCallSignature(tc);
-        if (tcsig) {
-          _crossReqReasoningCache.set(prefixedConv(`tcs:${tcsig}`), reasoning);
-          if (prefixedWs) _crossReqReasoningCache.set(prefixedWs(`tcs:${tcsig}`), reasoning);
-        }
-      }
-      const names = _toolCallNames(msg);
-      for (const name of names) {
-        _crossReqReasoningCache.set(prefixedConv(`tn:${name}`), reasoning);
-        if (prefixedWs) _crossReqReasoningCache.set(prefixedWs(`tn:${name}`), reasoning);
-      }
-      // Legacy keys for backward compatibility
-      const h = _msgHash(msg);
-      if (h) {
-        _crossReqReasoningCache.set(prefixedConv(h), reasoning);
-        if (prefixedWs) _crossReqReasoningCache.set(prefixedWs(h), reasoning);
-        _crossReqReasoningCache.set(`g:${mdl}:${h}`, reasoning);
-      }
-      _crossReqReasoningCache.set(prefixedConv(`mdl:${mdl}`), reasoning);
-      _crossReqReasoningCache.set(`g:${mdl}:last`, reasoning);
-      // Smart memory eviction: when cache grows beyond limit, evict oldest entries
-      if (_crossReqReasoningCache.size > _reasoningCacheMaxEntries) {
-        const keys = _crossReqReasoningCache.keys();
-        let toDelete = _crossReqReasoningCache.size - _reasoningCacheMaxEntries;
-        // Skip permanent keys (last-reasoning fallbacks, per-model keys)
-        const permanent = new Set();
-        for (const k of _crossReqReasoningCache.keys()) {
-          if (k.startsWith("g:") && k.endsWith(":last")) permanent.add(k);
-          if (k.includes(":mdl:")) permanent.add(k);
-        }
-        for (const k of keys) {
-          if (toDelete <= 0) break;
-          if (permanent.has(k)) continue;
-          _crossReqReasoningCache.delete(k);
-          toDelete--;
-        }
-      }
-    },
-    get(msg, mdl) {
-      // Multi-tier lookup order:
-      // 1. Message signature (most precise)
-      // 2. Tool call IDs (survives argument re-ordering)
-      // 3. Tool call signatures (survives ID changes)
-      // 4. Tool names (recovery of last resort)
-      // 5. Legacy content hash
-      // 6. FIFO fallback
-      // 7. Per-model last-reasoning
-
-      const sig = _messageSignature(msg);
-      if (sig) {
-        if (_crossReqReasoningCache.has(prefixedConv(`sig:${sig}`))) return _crossReqReasoningCache.get(prefixedConv(`sig:${sig}`));
-        if (prefixedWs && _crossReqReasoningCache.has(prefixedWs(`sig:${sig}`))) return _crossReqReasoningCache.get(prefixedWs(`sig:${sig}`));
-        if (_crossReqReasoningCache.has(`g:${mdl}:sig:${sig}`)) return _crossReqReasoningCache.get(`g:${mdl}:sig:${sig}`);
-      }
-      const ids = _toolCallIds(msg);
-      for (const id of ids) {
-        if (_crossReqReasoningCache.has(prefixedConv(`tc:${id}`))) return _crossReqReasoningCache.get(prefixedConv(`tc:${id}`));
-        if (prefixedWs && _crossReqReasoningCache.has(prefixedWs(`tc:${id}`))) return _crossReqReasoningCache.get(prefixedWs(`tc:${id}`));
-      }
-      const tcs = msg.tool_calls || [];
-      for (const tc of tcs) {
-        const tcsig = _toolCallSignature(tc);
-        if (tcsig) {
-          if (_crossReqReasoningCache.has(prefixedConv(`tcs:${tcsig}`))) return _crossReqReasoningCache.get(prefixedConv(`tcs:${tcsig}`));
-          if (prefixedWs && _crossReqReasoningCache.has(prefixedWs(`tcs:${tcsig}`))) return _crossReqReasoningCache.get(prefixedWs(`tcs:${tcsig}`));
-        }
-      }
-      const names = _toolCallNames(msg);
-      for (const name of names) {
-        if (_crossReqReasoningCache.has(prefixedConv(`tn:${name}`))) return _crossReqReasoningCache.get(prefixedConv(`tn:${name}`));
-        if (prefixedWs && _crossReqReasoningCache.has(prefixedWs(`tn:${name}`))) return _crossReqReasoningCache.get(prefixedWs(`tn:${name}`));
-      }
-      // Legacy lookup
-      const h = _msgHash(msg);
-      if (h) {
-        if (_crossReqReasoningCache.has(prefixedConv(h))) return _crossReqReasoningCache.get(prefixedConv(h));
-        if (prefixedWs && _crossReqReasoningCache.has(prefixedWs(h))) return _crossReqReasoningCache.get(prefixedWs(h));
-        if (_crossReqReasoningCache.has(`g:${mdl}:${h}`)) return _crossReqReasoningCache.get(`g:${mdl}:${h}`);
-      }
-      if (cursor < fifo.length) return fifo[cursor++];
-      const perMdl = _crossReqReasoningCache.get(prefixedConv(`mdl:${mdl}`));
-      if (perMdl) return perMdl;
-      return _crossReqReasoningCache.get(`g:${mdl}:last`);
-    },
-    crossCacheSize() { return _crossReqReasoningCache.size; },
-    isRapid,
-    sessionEntry,
-  };
-}
-
-// Ollama -> Go model mappings (what VS Copilot sends vs what Go API expects)
+// ── Ollama -> Go model mappings (what VS Copilot sends vs what Go API expects)
 const MODEL_MAP = {};
 
 function mapModel(name) {
@@ -828,64 +398,10 @@ function mapModel(name) {
   return resolveModel(clean).id;
 }
 
-function getWorkspaceRoot(messages) {
-  for (const m of messages) {
-    const c = typeof m.content === "string" ? m.content : "";
-    // VS Code Copilot: "workspace root path is: ..."
-    const m2 = c.match(/workspace root path is:\s*(\S+)/i);
-    if (m2) return m2[1].replace(/\\+$/, "").replace(/\\/g, "/");
-    // VS 2026 Copilot: "Path to the workspace root: ..."
-    const m3 = c.match(/path to (the )?workspace root:?\s*(\S+)/i);
-    if (m3) return (m3[2] || m3[1] || "").replace(/\\+$/, "").replace(/\\/g, "/");
-    // VS 2026: <CurrentWorkingDirectory>...</CurrentWorkingDirectory>
-    const m4 = c.match(/<CurrentWorkingDirectory>\s*([^<]+)\s*<\/CurrentWorkingDirectory>/i);
-    if (m4) return m4[1].trim().replace(/\\/g, "/");
-    // VS 2026: file path at start of user message
-    const m5 = c.match(/^([A-Za-z]:[\\/][^\n]+?)(?:\n|$)/);
-    if (m5 && (m5[1].includes("\\") || m5[1].includes("/"))) {
-      const p = m5[1].replace(/\\/g, "/");
-      const dir = p.lastIndexOf("/");
-      if (dir > 0) return p.substring(0, dir);
-    }
-  }
-  return "";
-}
-
-function getActiveFile(messages) {
-  for (const m of messages) {
-    const c = typeof m.content === "string" ? m.content : "";
-    // VS 2026: currently opened file
-    const m2 = c.match(/currently opened file:?\s*(\S+)/i);
-    if (m2) return m2[1].replace(/\\/g, "/");
-    // VS Code: active file
-    const m3 = c.match(/active file:?\s*(\S+)/i);
-    if (m3) return m3[1].replace(/\\/g, "/");
-  }
-  return "";
-}
-
-function getSelectedCode(messages) {
-  for (const m of messages) {
-    const c = typeof m.content === "string" ? m.content : "";
-    const m2 = c.match(/selected (?:code|text):?\s*\n?```[\w-]*\n?([\s\S]*?)```/i);
-    if (m2) return m2[1].trim();
-    const m3 = c.match(/<SelectedCode>([\s\S]*?)<\/SelectedCode>/i);
-    if (m3) return m3[1].trim();
-  }
-  return "";
-}
-
-function extractVSContext(messages) {
-  return {
-    workspace_root: getWorkspaceRoot(messages),
-    active_file: getActiveFile(messages),
-    selected_code: getSelectedCode(messages),
-  };
-}
-
-function _injectProjectUpdate(calls, messages, workspaceRoot) {
-  // Reserved for future project file injection
-}
+// NOTE: getWorkspaceRoot, getActiveFile, getSelectedCode, extractVSContext,
+// _fixPathEscapes, normalizeToolCall, extractToolCalls are now imported from tool-extractor.js.
+// _injectProjectUpdate was a no-op and has been removed.
+// _normLog was only used by the above functions and has been removed.
 
 const _schemaSeen = new Set();
 function _dumpToolSchemas(tools) {
@@ -903,685 +419,6 @@ function _dumpToolSchemas(tools) {
   }
 }
 
-const _normLog = (msg) => { debug(msg); };
-
-// Fix JSON.parse damage on path fields: \n → \n (newline), \t → \t (tab), \r → \r (carriage return)
-// AI writes Windows paths like "dir\ntl\file" but JSON.parse interprets \n as newline, \t as tab
-function _fixPathEscapes(s) {
-  return s.replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r');
-}
-
-function normalizeToolCall(tc) {
-   const name = tc.function?.name || "";
-  try {
-    const raw = tc.function.arguments || "{}";
-    // Pre-sanitize: fix common AI malformed JSON (unquoted identifiers in arrays/values)
-    let json = raw;
-    // Fix invalid escape sequences: \_ → \\_ (AI writes \_ but JSON only allows \\, \n, \t, \", etc.)
-    // Use negative lookbehind to avoid matching \\_ (already valid: escaped backslash + _)
-    json = json.replace(/(?<!\\)\\([^"\\\/bfnrtu])/g, '\\\\$1');
-    // "queries": foo → "queries":["foo"]
-    json = json.replace(/"queries"\s*:\s*([^\[",}\s][^,}]*)/, (_, v) => {
-      const t = v.trim();
-      if (/^(?:null|true|false|-?\d)/.test(t)) return `"queries":${t}`;
-      return `"queries":["${t}"]`;
-    });
-    // "includePattern": *.cs → "includePattern":"*.cs"
-    json = json.replace(/"includePattern"\s*:\s*([^",}\s]+)(?=\s*[,}]|$)/, (_, v) => {
-      if (/^(?:null|true|false|-?\d)/.test(v)) return `"includePattern":${v}`;
-      return `"includePattern":"${v}"`;
-    });
-    // "query": frontpage → "query":"frontpage" (any bare-identifier string field)
-    json = json.replace(/"query"\s*:\s*([^",}\s]+)(?=\s*[,}]|$)/g, (_, v) => {
-      if (/^(?:null|true|false|-?\d)/.test(v)) return `"query":${v}`;
-      return `"query":"${v}"`;
-    });
-    // Multi-word unquoted string values: "summary": List ntl files → "summary":"List ntl files"
-    json = json.replace(/"(summary|description|details|agentName|memory|reason|prompt)\s*"\s*:\s*([^,}]+?)(?=\s*,\s*"|\s*}$|$)/g, (_, field, val) => {
-      const t = val.trim();
-      if (!t || /^(?:null|true|false|-?\d)/.test(t)) return `"${field}":${val}`;
-      return `"${field}":"${t}"`;
-    });
-    const rawArgs = JSON.parse(json);
-    // 用 schema 自动补全缺失的必填参数（来源：VS / VSCode 工具定义）
-    const args = applyToolDefaults(name, rawArgs);
-    const safe = {};
-
-    // ── Confirmed VS schemas (VS Insiders 18.7) ──
-    if (/^get_file$/i.test(name)) {
-      // VS: required ["filename","startLine","endLine"]  properties: filename,startLine,endLine,includeLineNumbers
-      safe.filename = _fixPathEscapes(String(args.filename ?? args.filePath ?? args.path ?? args.uri ?? args.resource ?? ""));
-      safe.startLine = (typeof args.startLine === "number" && args.startLine >= 1) ? args.startLine : 1;
-      safe.endLine = (typeof args.endLine === "number" && args.endLine >= safe.startLine) ? args.endLine : 999999;
-      if (typeof args.includeLineNumbers === "boolean") safe.includeLineNumbers = args.includeLineNumbers;
-    } else if (/^read_file$/i.test(name)) {
-      // VSCode: required ["filePath","startLine","endLine"]  properties: filePath,startLine,endLine
-      safe.filePath = _fixPathEscapes(String(args.filePath ?? args.filename ?? args.path ?? args.uri ?? ""));
-      safe.startLine = (typeof args.startLine === "number" && args.startLine >= 1) ? args.startLine : 1;
-      safe.endLine = (typeof args.endLine === "number" && args.endLine >= safe.startLine) ? args.endLine : 999999;
-    } else if (/^(grep_search|search_content|search_file)$/i.test(name)) {
-      // required: ["query","isRegexp","includePattern","maxResults"]  properties: query,isRegexp,includePattern,maxResults
-      safe.query = String(args.query ?? args.pattern ?? args.search ?? args.searchTerm ?? "");
-      safe.isRegexp = (typeof args.isRegexp === "boolean") ? args.isRegexp : (typeof args.regex === "boolean" ? args.regex : false);
-      safe.includePattern = args.includePattern ?? args.include ?? args.fileTypes ?? args.glob ?? null;
-      if (safe.includePattern !== null) safe.includePattern = _fixPathEscapes(String(safe.includePattern));
-      safe.maxResults = (typeof args.maxResults === "number" && args.maxResults >= 1) ? args.maxResults : 20;
-    } else if (/^replace_string_in_file$/i.test(name)) {
-      // required: ["filePath","oldString","newString"]  properties: filePath,oldString,newString
-      safe.filePath = _fixPathEscapes(String(args.filePath ?? args.path ?? args.filename ?? args.file ?? ""));
-      safe.oldString = String(args.oldString ?? args.old_string ?? args.old_str ?? args.search ?? args.old_text ?? "");
-      safe.newString = String(args.newString ?? args.new_string ?? args.new_str ?? args.replace ?? args.new_text ?? "");
-    } else if (/^multi_replace_string_in_file$/i.test(name)) {
-      // required: ["replacements","explanation"]  properties: replacements,explanation
-      const list = args.replacements ?? args.edits ?? args.changes ?? args.patches ?? args.operations ?? args.diffs;
-      if (Array.isArray(list)) {
-        safe.replacements = list.map(r => {
-          const e = {};
-          e.filePath = _fixPathEscapes(String(r.filePath ?? r.filepath ?? r.path ?? r.filename ?? r.file ?? ""));
-          e.oldString = String(r.oldString ?? r.old_str ?? r.search ?? r.old_text ?? r.find ?? r.from ?? "");
-          e.newString = String(r.newString ?? r.new_str ?? r.replace ?? r.new_text ?? r.to ?? "");
-          return e;
-        });
-      } else {
-        const so = String(args.oldString ?? args.old_str ?? args.search ?? args.old_text ?? "");
-        const sn = String(args.newString ?? args.new_str ?? args.replace ?? args.new_text ?? "");
-        if (so || sn) safe.replacements = [{ filePath: "", oldString: so, newString: sn }];
-      }
-      safe.explanation = String(args.explanation ?? "");
-    } else if (/^create_file$/i.test(name)) {
-      // required: ["filePath","content"]  properties: filePath,content
-      safe.filePath = _fixPathEscapes(String(args.filePath ?? args.file_path ?? args.path ?? args.filename ?? "")).replace(/\\/g, "/");
-      safe.content = String(args.content ?? args.contents ?? args.text ?? args.code ?? "");
-      // Preserve any extra fields VS might require beyond the schema
-      for (const k of Object.keys(args)) {
-        if (!(k in safe)) safe[k] = args[k];
-      }
-    } else if (/^remove_file|delete_file(s)?$/i.test(name)) {
-      // required: ["filePath"]  properties: filePath
-      safe.filePath = _fixPathEscapes(String(args.filePath ?? args.path ?? args.filename ?? ""));
-    } else if (/^run_command_in_terminal|execute_command$/i.test(name)) {
-      // required: ["command","summary","background"]  properties: command,summary,background
-      safe.command = String(args.command ?? args.cmd ?? "");
-      safe.summary = String(args.summary ?? args.description ?? "");
-      safe.background = (typeof args.background === "boolean") ? args.background : (typeof args.runInBackground === "boolean" ? args.runInBackground : false);
-    } else if (/^get_background_terminal_output$/i.test(name)) {
-      // required: ["terminal_id","headLines","tailLines","stop","waitMs"]  properties: terminal_id,headLines,tailLines,stop,waitMs
-      safe.terminal_id = _fixPathEscapes(String(args.terminal_id ?? args.terminalId ?? args.terminal ?? ""));
-      safe.headLines = (typeof args.headLines === "number") ? args.headLines : 0;
-      safe.tailLines = (typeof args.tailLines === "number") ? args.tailLines : 0;
-      safe.stop = (typeof args.stop === "boolean") ? args.stop : false;
-      safe.waitMs = (typeof args.waitMs === "number") ? args.waitMs : (typeof args.timeout === "number" ? args.timeout : 0);
-    } else if (/^run_command_in_terminal|execute_command$/i.test(name)) {
-      // required: ["command","summary","background"]  properties: command,summary,background
-      safe.command = _fixPathEscapes(String(args.command ?? args.cmd ?? ""));
-      if (args.id != null) safe.id = String(args.id);
-      if (args.explanation != null) safe.explanation = String(args.explanation);
-      if (args.goal != null) safe.goal = String(args.goal);
-      if (args.mode != null) safe.mode = String(args.mode);
-      if (typeof args.isBackground === "boolean") safe.isBackground = args.isBackground;
-      if (typeof args.timeout === "number") safe.timeout = args.timeout;
-      if (typeof args.waitForOutput === "boolean") safe.waitForOutput = args.waitForOutput;
-    } else if (/^get_terminal_output$/i.test(name)) {
-      // required: ["id"]  properties: id
-      safe.id = String(args.id ?? args.terminal_id ?? "");
-    } else if (/^kill_terminal$/i.test(name)) {
-      // required: ["id"]  properties: id
-      safe.id = String(args.id ?? args.terminal_id ?? "");
-    } else if (/^semantic_search$/i.test(name)) {
-      // required: ["query"]  properties: query
-      safe.query = String(args.query ?? args.search ?? "");
-    } else if (/^fetch_webpage$/i.test(name)) {
-      // required: ["urls","query"]  properties: urls,query
-      safe.urls = args.urls ?? args.url ?? [];
-      if (!Array.isArray(safe.urls)) safe.urls = [String(safe.urls ?? "")];
-      safe.query = String(args.query ?? "");
-    } else if (/^runSubagent$/i.test(name)) {
-      // required: ["prompt","description"]  properties: prompt,description,agentName,model
-      safe.prompt = String(args.prompt ?? args.task ?? "");
-      safe.description = String(args.description ?? args.desc ?? "");
-      if (args.agentName != null) safe.agentName = String(args.agentName);
-      if (args.model != null) safe.model = String(args.model);
-    } else if (/^manage_todo_list$/i.test(name)) {
-      // required: ["todoList"]  properties: todoList
-      safe.todoList = args.todoList ?? args.todos ?? [];
-      if (!Array.isArray(safe.todoList)) safe.todoList = [safe.todoList];
-    } else if (/^memory$/i.test(name)) {
-      // required: ["command"]  properties: command,path,file_text,old_str,new_str,...
-      safe.command = String(args.command ?? "");
-      if (args.path != null) safe.path = _fixPathEscapes(String(args.path));
-      if (args.file_text != null) safe.file_text = String(args.file_text);
-      if (args.old_str != null) safe.old_str = String(args.old_str);
-      if (args.new_str != null) safe.new_str = String(args.new_str);
-      if (typeof args.insert_line === "number") safe.insert_line = args.insert_line;
-      if (args.insert_text != null) safe.insert_text = String(args.insert_text);
-      if (args.view_range != null) safe.view_range = args.view_range;
-      if (args.old_path != null) safe.old_path = String(args.old_path);
-      if (args.new_path != null) safe.new_path = String(args.new_path);
-    } else if (/^vscode_listCodeUsages$/i.test(name)) {
-      // required: ["symbol","lineContent"]  properties: symbol,uri,filePath,lineContent
-      safe.symbol = String(args.symbol ?? args.symbolName ?? args.query ?? "");
-      safe.lineContent = String(args.lineContent ?? args.line ?? "");
-      if (args.filePath != null) safe.filePath = _fixPathEscapes(String(args.filePath));
-      if (args.uri != null) safe.uri = String(args.uri);
-    } else if (/^vscode_renameSymbol$/i.test(name)) {
-      // required: ["symbol","newName","lineContent"]  properties: symbol,newName,uri,filePath,lineContent
-      safe.symbol = String(args.symbol ?? "");
-      safe.newName = String(args.newName ?? args.new_name ?? "");
-      safe.lineContent = String(args.lineContent ?? args.line ?? "");
-      if (args.filePath != null) safe.filePath = _fixPathEscapes(String(args.filePath));
-      if (args.uri != null) safe.uri = String(args.uri);
-    } else if (/^vscode_askQuestions$/i.test(name)) {
-      // required: ["questions"]  properties: questions
-      safe.questions = args.questions ?? args.question ?? [];
-      if (!Array.isArray(safe.questions)) safe.questions = [String(safe.questions ?? "")];
-    } else if (/^run_vscode_command$/i.test(name)) {
-      // required: ["commandId","name"]  properties: commandId,name,args,skipCheck
-      safe.commandId = String(args.commandId ?? args.command ?? "");
-      safe.name = String(args.name ?? "");
-      if (args.args != null) safe.args = args.args;
-      if (typeof args.skipCheck === "boolean") safe.skipCheck = args.skipCheck;
-    } else if (/^(create_and_run_task)$/i.test(name)) {
-      // 保留 AI 生成的完整参数（steps, plan, task, workspaceFolder 等）
-      for (const [k, v] of Object.entries(args)) {
-        if (v != null) safe[k] = v;
-      }
-    } else if (/^github_text_search$/i.test(name)) {
-      // required: ["scope","query"]  properties: scope,query,maxResults
-      safe.scope = String(args.scope ?? "repo");
-      safe.query = String(args.query ?? args.search ?? "");
-      if (typeof args.maxResults === "number") safe.maxResults = args.maxResults;
-    } else if (/^github_repo$/i.test(name)) {
-      // required: ["repo","query"]  properties: repo,query
-      safe.repo = String(args.repo ?? "");
-      safe.query = String(args.query ?? "");
-    } else if (/^(open_browser_page|read_page|navigate_page|click_element|type_in_page|hover_element|drag_element|handle_dialog|screenshot_page|run_playwright_code)$/i.test(name)) {
-      // VSCode browser/Playwright tools — pass all known params through
-      for (const [k, v] of Object.entries(args)) {
-        if (v != null) safe[k] = v;
-      }
-    } else if (/^lookup_vs$/i.test(name)) {
-      // required: ["terms"]  properties: terms
-      const rawTerms = args.terms ?? args.query ?? args.queries ?? args.search ?? args.searchTerms ?? "";
-      safe.terms = Array.isArray(rawTerms) ? rawTerms.map(String) : [String(rawTerms)];
-    } else {
-      return tc;
-    }
-
-    const fixed = JSON.stringify(safe);
-    if (name) _normLog(`\x1b[35m[normalize] ${name} RAW: ${raw} → ${fixed}\x1b[0m`);
-    return { ...tc, function: { ...tc.function, arguments: fixed } };
-  } catch (e) {
-    debug(`\x1b[33m[normalize] ${name} JSON parse failed: ${e.message?.slice(0, 100)}\x1b[0m`);
-    const raw2 = tc.function?.arguments;
-    if (!raw2) return null;
-    // DeepSeek often truncates create_file content mid-string — salvage what we can
-    if (/^create_file$/i.test(name)) {
-      try {
-        const safe = {};
-        const fpMatch = raw2.match(/"(?:filePath|file_path|path|filename)"\s*:\s*"((?:[^"\\]|\\.)*)"/)
-                     || raw2.match(/"(?:filePath|file_path|path|filename)"\s*:\s*`([^`]*)`/);
-        safe.filePath = fpMatch ? fpMatch[1].replace(/\\+/g, "/").replace(/\/{2,}/g, "/") : "";
-        let btContent = null;
-        const btMatch = raw2.match(/"content"\s*:\s*`([\s\S]*?)`/);
-        if (btMatch) { btContent = btMatch[1]; }
-        const ctMatch = !btContent ? raw2.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)/) : null;
-        safe.content = btContent || (ctMatch ? ctMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\") : "");
-        if (safe.filePath && safe.content.length > 0) {
-          _normLog(`\x1b[33m[create_file] salvaged path=${safe.filePath} contentLen=${safe.content.length}\x1b[0m`);
-          const fixed = JSON.stringify(safe);
-          return { ...tc, function: { ...tc.function, arguments: fixed } };
-        }
-      } catch {}
-    }
-    if (/^get_file$/i.test(name)) {
-      try {
-        const safe = {};
-        let fnMatch = raw2.match(/"filename"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        if (!fnMatch) fnMatch = raw2.match(/"filename"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        safe.filename = fnMatch ? fnMatch[1].replace(/\\+/g, "/").replace(/\/{2,}/g, "/") : "";
-        const slMatch = raw2.match(/"startLine"\s*:\s*(\d+)/);
-        safe.startLine = slMatch ? parseInt(slMatch[1], 10) : 1;
-        const elMatch = raw2.match(/"endLine"\s*:\s*(\d+)/);
-        safe.endLine = elMatch ? parseInt(elMatch[1], 10) : 999999;
-        if (safe.filename) {
-          _normLog(`\x1b[33m[get_file] salvaged filename=${safe.filename} startLine=${safe.startLine} endLine=${safe.endLine}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^replace_string_in_file$/i.test(name)) {
-      try {
-        const safe = {};
-        const fpMatch = raw2.match(/"(?:filePath|filename|path|file)"\s*:\s*"((?:[^"\\]|\\.)*)/) || raw2.match(/"(?:filePath|filename|path|file)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        safe.filePath = fpMatch ? fpMatch[1].replace(/\\+/g, "/").replace(/\/{2,}/g, "/") : "";
-        const osMatch = raw2.match(/"(?:oldString|old_string|old_str|old|search)"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        safe.oldString = osMatch ? osMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\") : "";
-        const nsMatch = raw2.match(/"(?:newString|new_string|new_str|new|replace)"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        safe.newString = nsMatch ? nsMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\") : "";
-        if (safe.filePath && (safe.oldString || safe.newString)) {
-          _normLog(`\x1b[33m[replace_string_in_file] salvaged path=${safe.filePath} oldLen=${safe.oldString.length} newLen=${safe.newString.length}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^multi_replace_string_in_file$/i.test(name)) {
-      try {
-        const fpMatch = raw2.match(/"(?:filePath|filename|path|file)"\s*:\s*"((?:[^"\\]|\\.)*)/) || raw2.match(/"(?:filePath|filename|path|file)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        const osMatch = raw2.match(/"(?:oldString|old_string|old_str|old|search)"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        const nsMatch = raw2.match(/"(?:newString|new_string|new_str|new|replace)"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        if (fpMatch) {
-          const rep = {
-            filePath: fpMatch[1].replace(/\\+/g, "/").replace(/\/{2,}/g, "/"),
-            oldString: osMatch ? osMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\") : "",
-            newString: nsMatch ? nsMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\") : "",
-          };
-          _normLog(`\x1b[33m[multi_replace_string_in_file] salvaged 1 replacement path=${rep.filePath}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify({ replacements: [rep] }) } };
-        }
-      } catch {}
-    }
-    if (/^insert_edit_into_file$/i.test(name)) {
-      try {
-        const safe = {};
-        const fpMatch = raw2.match(/"(?:filePath|filename|path|file)"\s*:\s*"((?:[^"\\]|\\.)*)/) || raw2.match(/"(?:filePath|filename|path|file)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        safe.filePath = fpMatch ? fpMatch[1].replace(/\\+/g, "/").replace(/\/{2,}/g, "/") : "";
-        const cdMatch = raw2.match(/"code"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        safe.code = cdMatch ? cdMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\") : "";
-        if (safe.filePath && safe.code.length > 0) {
-          _normLog(`\x1b[33m[insert_edit_into_file] salvaged path=${safe.filePath} codeLen=${safe.code.length}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^(run_command_in_terminal|execute_command)$/i.test(name)) {
-      try {
-        const safe = {};
-        const cmdMatch = raw2.match(/"command"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"command"\s*:\s*([^,}]+?)(?=\s*,\s*"|\s*}$|$)/);
-        safe.command = cmdMatch ? cmdMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\").trim() : "";
-        const sumMatch = raw2.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"summary"\s*:\s*([^,}]+?)(?=\s*,\s*"|\s*}$|$)/);
-        safe.summary = sumMatch ? sumMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\").trim() : "";
-        safe.background = /"background"\s*:\s*true/i.test(raw2);
-        if (safe.command) {
-          _normLog(`\x1b[33m[${name}] salvaged command="${safe.command.slice(0,60)}${safe.command.length > 60 ? "..." : ""}" summary="${safe.summary.slice(0,40)}${safe.summary.length > 40 ? "..." : ""}" background=${safe.background}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^(grep_search|search_content|search_file)$/i.test(name)) {
-      try {
-        const safe = {};
-        const qMatch = raw2.match(/"query"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"query"\s*:\s*([^,}\s]+)/);
-        safe.query = qMatch ? qMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\").replace(/^"/, "") : "";
-        safe.isRegexp = /"isRegexp"\s*:\s*true/i.test(raw2);
-        const ipMatch = raw2.match(/"includePattern"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        if (ipMatch) {
-          safe.includePattern = ipMatch[1];
-        } else {
-          const unq = raw2.match(/"includePattern"\s*:\s*([^,}\s]+)/);
-          safe.includePattern = (unq && unq[1] !== 'null') ? unq[1] : null;
-          if (!unq) {
-            const truncated = raw2.match(/"includePattern"\s*:\s*"((?:[^"\\]|\\.)*)/);
-            if (truncated) safe.includePattern = truncated[1].replace(/\\+/g, "\\");
-          }
-        }
-        const mrMatch = raw2.match(/"maxResults"\s*:\s*(\d+)/);
-        safe.maxResults = mrMatch ? parseInt(mrMatch[1], 10) : null;
-        if (safe.query || safe.includePattern) {
-          _normLog(`\x1b[33m[${name}] salvaged query="${safe.query}" isRegexp=${safe.isRegexp} includePattern=${safe.includePattern} maxResults=${safe.maxResults}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^(find_symbol|search_symbol)$/i.test(name)) {
-      try {
-        const safe = {};
-        safe.symbolName = "";
-        const smMatch = raw2.match(/"symbolName"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"symbolName"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        if (smMatch) safe.symbolName = smMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-        if (!safe.symbolName) {
-          const qMatch = raw2.match(/"(?:query|symbol|name)"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"(?:query|symbol|name)"\s*:\s*"((?:[^"\\]|\\.)*)/);
-          if (qMatch) safe.symbolName = qMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-        }
-        const ntMatch = raw2.match(/"navigationType"\s*:\s*(\d+)/);
-        safe.navigationType = ntMatch ? parseInt(ntMatch[1], 10) : 1;
-        const fpMatch = raw2.match(/"(?:filepath|filePath|filename)"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"(?:filepath|filePath|filename)"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        safe.filepath = fpMatch ? fpMatch[1].replace(/\\+/g, "/").replace(/\/{2,}/g, "/") : "";
-        const ltMatch = raw2.match(/"lineText"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"lineText"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        safe.lineText = ltMatch ? ltMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\") : "";
-        if (safe.symbolName) {
-          _normLog(`\x1b[33m[${name}] salvaged symbolName="${safe.symbolName.slice(0,40)}" navigationType=${safe.navigationType} filepath=${safe.filepath}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^read_file$/i.test(name)) {
-      try {
-        const safe = {};
-        const fpMatch = raw2.match(/"(?:filePath|filepath|filename|path)"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"(?:filePath|filepath|filename|path)"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        safe.filePath = fpMatch ? fpMatch[1].replace(/\\+/g, "/").replace(/\/{2,}/g, "/") : "";
-        const slMatch = raw2.match(/"startLine"\s*:\s*(\d+)/);
-        safe.startLine = slMatch ? parseInt(slMatch[1], 10) : 1;
-        const elMatch = raw2.match(/"endLine"\s*:\s*(\d+)/);
-        safe.endLine = elMatch ? parseInt(elMatch[1], 10) : 999999;
-        if (safe.filePath) {
-          _normLog(`\x1b[33m[read_file] salvaged filePath=${safe.filePath} startLine=${safe.startLine} endLine=${safe.endLine}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^(run_tests|execute_tests)$/i.test(name)) {
-      try {
-        const safe = {};
-        let ft = []; let fv = [];
-        const ftArr = raw2.match(/"filterTypes"\s*:\s*\[(.*?)(?:\]|$)/s);
-        if (ftArr) {
-          const inner = ftArr[1];
-          const sRe = /"((?:[^"\\]|\\.)*)"/g;
-          let sm;
-          while ((sm = sRe.exec(inner))) ft.push(sm[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
-        }
-        if (!ft.length) {
-          const single = raw2.match(/"filterTypes"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-          if (single) ft = [single[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")];
-        }
-        const fvArr = raw2.match(/"filterValues"\s*:\s*\[(.*?)(?:\]|$)/s);
-        if (fvArr) {
-          const inner = fvArr[1];
-          const sRe = /"((?:[^"\\]|\\.)*)"/g;
-          let sm;
-          while ((sm = sRe.exec(inner))) fv.push(sm[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
-        }
-        if (!fv.length) {
-          const single = raw2.match(/"filterValues"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-          if (single) fv = [single[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")];
-        }
-        safe.filterTypes = ft;
-        safe.filterValues = fv;
-        if (ft.length || fv.length) {
-          _normLog(`\x1b[33m[${name}] salvaged filterTypes=[${ft.join(",")}] filterValues=[${fv.join(",")}]\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^lookup_vs$/i.test(name)) {
-      try {
-        const safe = {};
-        let terms = [];
-        const tArr = raw2.match(/"terms"\s*:\s*\[(.*?)(?:\]|$)/s);
-        if (tArr) {
-          const inner = tArr[1];
-          const sRe = /"((?:[^"\\]|\\.)*)"/g;
-          let sm;
-          while ((sm = sRe.exec(inner))) terms.push(sm[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
-        }
-        if (!terms.length) {
-          const single = raw2.match(/"terms"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-          if (single) terms = [single[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")];
-        }
-        if (!terms.length) {
-          const tailMatch = raw2.match(/"terms"\s*:\s*(.*?)\s*\}/);
-          if (tailMatch) {
-            let raw = tailMatch[1].trim().replace(/^"/, "").replace(/"?$/,"").replace(/"/g, "").trim();
-            if (raw) terms = [raw];
-          }
-        }
-        if (terms.length) {
-          safe.terms = terms;
-          _normLog(`\x1b[33m[lookup_vs] salvaged terms=[${terms.map(t => t.slice(0,40)).join(",")}]\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^(run_in_terminal|send_to_terminal)$/i.test(name)) {
-      try {
-        const safe = {};
-        const cmdMatch = raw2.match(/"command"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"command"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        safe.command = cmdMatch ? cmdMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\") : "";
-        const idMatch = raw2.match(/"id"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"id"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        if (idMatch) safe.id = idMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-        const expMatch = raw2.match(/"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"/) || raw2.match(/"explanation"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        if (expMatch) safe.explanation = expMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-        if (safe.command) {
-          _normLog(`\x1b[33m[${name}] salvaged command="${safe.command.slice(0,60)}${safe.command.length>60?"...":""}"\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^plan$/i.test(name)) {
-      try {
-        const pmMatch = raw2.match(/"planMarkdown"\s*:\s*"((?:[^"\\]|\\.)*)/);
-        if (pmMatch) {
-          const planMarkdown = pmMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-          if (planMarkdown.length > 0) {
-            _normLog(`\x1b[33m[plan] salvaged planLen=${planMarkdown.length}\x1b[0m`);
-            return { ...tc, function: { ...tc.function, arguments: JSON.stringify({ planMarkdown }) } };
-          }
-        }
-      } catch {}
-    }
-    if (/^(code_search|search_code|semantic_search)$/i.test(name)) {
-      try {
-        const safe = {};
-        let queries = [];
-        let sqMatch = raw2.match(/"searchQueries"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        if (sqMatch) {
-          queries = [sqMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")];
-        } else {
-          const tailMatch = raw2.match(/"searchQueries"\s*:\s*(.*?)\s*\}/);
-          if (tailMatch) {
-            let raw = tailMatch[1].trim().replace(/^"/, "").replace(/"?$/,"").replace(/"/g, "").trim();
-            if (raw) queries = [raw];
-          }
-        }
-        if (!queries.length) {
-          const qMatch = raw2.match(/"queries"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-          if (qMatch) queries = [qMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")];
-        }
-        if (!queries.length) {
-          const unq = raw2.match(/"searchQueries"\s*:\s*"?\s*([^"}]+)/);
-          if (unq) queries = [unq[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\").trim()];
-        }
-        if (queries.length) {
-          safe.searchQueries = queries;
-          _normLog(`\x1b[33m[${name}] salvaged queries=[${queries.map(q => q.slice(0,40)).join(",")}]\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-    if (/^(file_search|search_files|find_files|glob_search|list_files)$/i.test(name)) {
-      try {
-        const safe = {};
-        const queries = [];
-        const qArr = raw2.match(/"queries"\s*:\s*\[(.*?)(?:\]|$)/s);
-        if (qArr) {
-          const inner = qArr[1];
-          const sqRe = /"((?:[^"\\]|\\.)*)"/g;
-          let sq;
-          while ((sq = sqRe.exec(inner))) queries.push(sq[1]);
-        }
-        if (!queries.length) {
-          const unq = raw2.match(/"queries"\s*:\s*\[?\s*([^"\],]+)/);
-          if (unq) {
-            const vals = unq[1].split(/[\s,]+/).filter(v => v && v !== 'null');
-            for (const v of vals) queries.push(v);
-          }
-        }
-        safe.queries = queries;
-        const mrMatch = raw2.match(/"maxResults"\s*:\s*(\d+)/);
-        safe.maxResults = mrMatch ? parseInt(mrMatch[1], 10) : 20;
-        if (safe.queries.length) {
-          _normLog(`\x1b[33m[${name}] salvaged queries=[${safe.queries.join(",")}] maxResults=${safe.maxResults}\x1b[0m`);
-          return { ...tc, function: { ...tc.function, arguments: JSON.stringify(safe) } };
-        }
-      } catch {}
-    }
-  }
-  _normLog(`\x1b[31m[drop] ${name}: JSON parse failed, salvage unsuccessful — discarding\x1b[0m`);
-  return null;
-}
-
-function extractToolCalls(text, workspaceRoot = "", messages = []) {
-  if (!text) return { content: text || "", toolCalls: [] };
-  const calls = [];
-  let remaining = text;
-
-  // 0. Detect VS context from messages for better path resolution
-  const vsCtx = workspaceRoot ? { workspace_root: workspaceRoot } : extractVSContext(messages);
-
-  // 1. Explicit ```tool blocks — brace-counted to handle nested { } in string content
-  const toolBlockStartRe = /```tool\n\{/gi;
-  let tb;
-  while ((tb = toolBlockStartRe.exec(text)) !== null) {
-    const jsonStart = tb.index + tb[0].length - 1; // position of {
-    let depth = 1, endPos = -1, inStr = false, esc = false;
-    for (let i = jsonStart + 1; i < text.length; i++) {
-      const ch = text[i];
-      if (esc) { esc = false; continue; }
-      if (ch === "\\") { esc = true; continue; }
-      if (ch === "\"") { inStr = !inStr; continue; }
-      if (inStr) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") { depth--; if (depth === 0) { endPos = i; break; } }
-    }
-    if (endPos < 0) continue;
-    toolBlockStartRe.lastIndex = endPos + 1;
-    const jsonStr = text.slice(jsonStart, endPos + 1);
-    const fullMatch = text.slice(tb.index, endPos + 1);
-    try {
-      const parsed = JSON.parse(jsonStr);
-      const tc = normalizeToolCall({
-        id: callId(), type: "function",
-        function: { name: parsed.name, arguments: JSON.stringify(parsed.arguments || {}) },
-      });
-      if (tc) calls.push(tc);
-      remaining = remaining.replace(fullMatch, "");
-    } catch {}
-  }
-
-  // 2. VS Copilot <function_calls> XML blocks
-  const fcBlockRe = /<function_calls>\s*([\s\S]*?)\s*<\/function_calls>/g;
-  let fc;
-  while ((fc = fcBlockRe.exec(text)) !== null) {
-    const inner = fc[1];
-    const invokeRe = /<invoke\s+name\s*=\s*"([^"]+)"\s*>([\s\S]*?)<\/invoke>/g;
-    let inv;
-    while ((inv = invokeRe.exec(inner)) !== null) {
-      const fnName = inv[1];
-      const fnBody = inv[2];
-      const args = {};
-      const paramRe = /<parameter\s+name\s*=\s*"([^"]+)"\s*>([\s\S]*?)<\/parameter>/g;
-      let p;
-      while ((p = paramRe.exec(fnBody)) !== null) {
-        args[p[1]] = p[2];
-      }
-      const tc = normalizeToolCall({
-        id: callId(), type: "function",
-        function: { name: fnName, arguments: JSON.stringify(args) },
-      });
-      if (tc) calls.push(tc);
-    }
-    remaining = remaining.replace(fc[0], "");
-  }
-
-  // 2b. ```json tool call blocks — brace-counted to handle nested { } in string content
-  const jsonBlockStartRe = /```json\s*\n\{/gi;
-  let jb;
-  while ((jb = jsonBlockStartRe.exec(text)) !== null) {
-    const jsonStart = jb.index + jb[0].length - 1; // position of {
-    let depth = 1, endPos = -1, inStr = false, esc = false;
-    for (let i = jsonStart + 1; i < text.length; i++) {
-      const ch = text[i];
-      if (esc) { esc = false; continue; }
-      if (ch === "\\") { esc = true; continue; }
-      if (ch === "\"") { inStr = !inStr; continue; }
-      if (inStr) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") { depth--; if (depth === 0) { endPos = i; break; } }
-    }
-    if (endPos < 0) continue;
-    jsonBlockStartRe.lastIndex = endPos + 1;
-    const jsonStr = text.slice(jsonStart, endPos + 1);
-    const fullMatch = text.slice(jb.index, endPos + 1);
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (parsed.name && parsed.arguments) {
-        const tc = normalizeToolCall({
-          id: callId(), type: "function",
-          function: { name: parsed.name, arguments: JSON.stringify(parsed.arguments || {}) },
-        });
-        if (tc) { calls.push(tc); remaining = remaining.replace(fullMatch, ""); }
-      }
-    } catch {}
-  }
-
-  // 2c. Inline JSON tool calls: {"name":"create_file","arguments":{...}} (standalone, no code fence)
-  // Use brace-counting to handle content with nested { } — the old regex \{[\\s\\S]*?\}\\s*\\}
-  // would incorrectly match }} inside string content (e.g. nested JS functions).
-  const inlineJsonHeadRe = /\{\s*"name"\s*:\s*"(create_file|replace_string_in_file|multi_replace_string_in_file|remove_file|get_file|read_file|grep_search|file_search|find_symbol|search_symbol|run_command_in_terminal|execute_command|replace_in_file|task_complete|start_modernization)"\s*,\s*"arguments"\s*:\s*\{/gi;
-  let ij;
-  while ((ij = inlineJsonHeadRe.exec(text)) !== null) {
-    const fnName = ij[1];
-    const startPos = ij.index;
-    const braceStart = ij.index + ij[0].length - 1; // position of the opening { before arguments
-    let depth = 1;
-    let endPos = -1;
-    let inString = false;
-    let escape = false;
-    for (let i = braceStart + 1; i < text.length; i++) {
-      const ch = text[i];
-      if (escape) { escape = false; continue; }
-      if (ch === "\\") { escape = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) { endPos = i; break; }
-      }
-    }
-    if (endPos < 0) continue;
-    inlineJsonHeadRe.lastIndex = endPos + 1; // advance past brace-counted match so subsequent tool calls are found
-    const fullJson = text.slice(startPos, endPos + 1);
-    try {
-      const parsed = JSON.parse(fullJson);
-      if (parsed.name && parsed.arguments) {
-        const tc = normalizeToolCall({
-          id: callId(), type: "function",
-          function: { name: parsed.name, arguments: JSON.stringify(parsed.arguments || {}) },
-        });
-        if (tc) { calls.push(tc); remaining = remaining.replace(fullJson, ""); }
-      }
-    } catch (e) {
-      if (fnName === "create_file") log(`\x1b[31m[extract-inline] create_file JSON parse failed: ${e.message}\x1b[0m`);
-    }
-  }
-
-  // 3. Markdown file creation: ## `path` ```lang\ncontent\n```
-  const createRe = /(?:^|\n)(?:##\s*)?`([^`\n]+\.\w+)`\s*\n```[\w-]*\n([\s\S]*?)```/gi;
-  let m;
-  while ((m = createRe.exec(text)) !== null) {
-    let fp = m[1].replace(/\\/g, "/").trim();
-    const codeContent = m[2].trim();
-    if (!fp || codeContent.length < 3 || codeContent.length > 200000) continue;
-    // Skip project files — VS 2026 handles these natively
-    if (/\.(csproj|vbproj|fsproj|jsproj|sln|xproj|dcproj|vcxproj|wsproj|njsproj)$/i.test(fp)) continue;
-    if (vsCtx.workspace_root && !/^[A-Za-z]:[/\\]/.test(fp)) {
-      fp = vsCtx.workspace_root.replace(/\/$/, "") + "/" + fp;
-    }
-    const tc = normalizeToolCall({
-      id: callId(), type: "function",
-      function: { name: "create_file", arguments: JSON.stringify({ filePath: fp, content: codeContent }) },
-    });
-    if (tc) calls.push(tc);
-  }
-
-  // Auto-inject project file update for created files
-  _injectProjectUpdate(calls, messages, vsCtx.workspace_root);
-
-  if (calls.length === 0) return { content: text, toolCalls: [] };
-  return { content: remaining.replace(/\n{3,}/g, "\n\n").trim(), toolCalls: calls };
-}
-
 // ── Debug client override (?src=vscode|vs|vsi|sql) ──
 app.use("*", async (c, next) => {
   const src = c.req.query("src");
@@ -1589,12 +426,9 @@ app.use("*", async (c, next) => {
     _forceClient = src;
     log(`\x1b[35m[debug]\x1b[0m src=${src}`);
   }
-  await next();
-  _forceClient = null;
+  // M8: try/finally ensures _forceClient is always reset, even on request errors
+  try { await next(); } finally { _forceClient = null; }
 });
-
-
-
 // ── GET endpoints ──
 
 app.get("/", c => c.json({ service: "Snet", status: "running" }));
@@ -1617,10 +451,10 @@ app.get("/health", async c => {
 
     if (!real.length) {
       status = "degraded";
-      reason = "没有模型已加载 — 后台获取可能仍在进行中";
+      reason = t("healthNoModels");
     } else if (!dsModels.length && !mimoModels.length) {
       status = "unhealthy";
-      reason = "没有模型可用";
+      reason = t("healthNoAvailable");
     }
 
     return c.json({
@@ -1631,7 +465,7 @@ app.get("/health", async c => {
       models_total: real.length,
       models_deepseek: dsModels.length,
       models_mimo: mimoModels.length,
-      proxy_version: "420.96.00",
+      proxy_version: SNET_VERSION,
     });
   } catch (e) {
     return c.json({
@@ -1647,7 +481,7 @@ app.post("/api/language", async c => {
     const body = await c.req.json();
     if (body && (body.language === "zh" || body.language === "en")) {
       setLanguage(body.language);
-      log(`[i18n] language set to ${body.language === "zh" ? "中文" : "English"}`);
+      log(t("i18nSet"));
       return c.json({ ok: true, language: getLanguage() });
     }
     return c.json({ ok: false, error: "invalid language" }, 400);
@@ -1694,28 +528,10 @@ async function handleTags(c) {
     const ctxLen = metadata.context_length || config.defaultContextLength;
     const thinkingModes = sep ? [] : getThinkingModes(rawId);
 
-    function thin(name) {
-      if (vsc) return name;
-      return name.length > 20 ? name.replace(/ /g, "\u2009") : name;
-    }
-
-    const SHORT_TAG = { LOW: "LO", MEDIUM: "MD", HIGH: "HI", MAXIMUM: "MX", XHIGH: "X" };
-
-    function vsTag(baseName, mode) {
-      if (vsc) return ` [${mode}]`;
-      const full = ` [${mode}]`;
-      if ((baseName + full).length <= 20) return full;
-      const short = SHORT_TAG[mode];
-      if (short) return ` [${short}]`;
-      return full;
-    }
-
-    const VSC_TAG = { LOW: "/1_(low)", MEDIUM: "/2_(medium)", HIGH: "/3_high", MAXIMUM: "/4_(maximum)", XHIGH: "/4_(xhigh)" };
-
     function pushModel(name, modelTag, digestSuffix, parentModel) {
       const displayFamily = family + (modelTag || "");
       models.push({
-        name: thin(name),
+        name: _thin(name, vsc),
         model: `${vsc ? id + modelTag : m.model + modelTag}`,
         modified_at: now,
         size: m.size || 0,
@@ -1740,10 +556,10 @@ async function handleTags(c) {
       const baseName = vsc ? prefix + m.name : m.name;
       pushModel(baseName, "", "", "");
       for (const mode of thinkingModes) {
-        const tag = vsTag(baseName, mode);
+        const tag = _vsTag(baseName, mode, vsc);
         pushModel(
           `${baseName}${tag}`,
-          vsc ? (VSC_TAG[mode] || `/${mode.toLowerCase()}`) : ` [${mode}]`,
+          vsc ? (VSC_THINK_TAG[mode] || `/${mode.toLowerCase()}`) : ` [${mode}]`,
           `-${mode.toLowerCase()}`,
           baseName,
         );
@@ -1761,7 +577,7 @@ async function handleTags(c) {
   return c.json({ models });
 }
 
-app.get("/api/version", c => c.json({ version: "420.96.00" }));
+app.get("/api/version", c => c.json({ version: SNET_VERSION }));
 
 app.get("/version", async c => {
   const models = await getModels();
@@ -1772,7 +588,7 @@ app.get("/version", async c => {
     return [m.name];
   }).sort();
   return c.json({
-    proxy_version: "420.96.00",
+    proxy_version: SNET_VERSION,
     ollama_compatibility: "0.6.4",
     proxy_name: "Snet",
     supported_models: real,
@@ -1780,23 +596,33 @@ app.get("/version", async c => {
 });
 
 let _lastRefresh = 0;
+let _refreshPromise = null; // M34: guard against concurrent refresh calls
+
+// M34: Debounced refresh — prevents concurrent refreshModel calls
+async function _debouncedRefresh(label, minGapMs = 5000) {
+  if (Date.now() - _lastRefresh < minGapMs) return;
+  if (_refreshPromise) return _refreshPromise; // reuse in-flight refresh
+  _lastRefresh = Date.now();
+  _refreshPromise = refreshModels().finally(() => { _refreshPromise = null; });
+  return _refreshPromise;
+}
 
 // DeepSeek API Key 变更检测 — 运行时自动刷新模型列表
 let _lastDSAvail = null;
 async function _checkDSRefresh() {
   const nowAvail = isDeepSeekAvailable();
   if (_lastDSAvail !== null && nowAvail !== _lastDSAvail) {
-    log(`[deepseek] Key ${nowAvail ? "已设置" : "已移除"} — 刷新模型列表`);
+    log(nowAvail ? t("dsKeySet") : t("dsKeyRemoved"));
     _lastDSAvail = nowAvail;
-    if (Date.now() - _lastRefresh > 5000) { _lastRefresh = Date.now(); await refreshModels(); }
+    await _debouncedRefresh("ds");
     return;
   }
   _lastDSAvail = nowAvail;
   if (nowAvail && _lastRefresh > 0) {
     const models = await getModels();
     if (!models.some(m => SEP_DEEPSEEK && (m.model || "").replace(":latest", "").startsWith(SEP_DEEPSEEK))) {
-      log(`[deepseek] Key 已设置但无 DeepSeek 模型 — 刷新中`);
-      if (Date.now() - _lastRefresh > 5000) { _lastRefresh = Date.now(); await refreshModels(); }
+      log(t("dsKeyNoModels"));
+      await _debouncedRefresh("ds-nomodel");
     }
   }
 }
@@ -1806,17 +632,17 @@ let _lastMiMoAvail = null;
 async function _checkMiMoRefresh() {
   const nowAvail = isMiMoAvailable();
   if (_lastMiMoAvail !== null && nowAvail !== _lastMiMoAvail) {
-    log(`[mimo] Key ${nowAvail ? "已设置" : "已移除"} — 刷新模型列表`);
+    log(nowAvail ? t("mimoKeySet") : t("mimoKeyRemoved"));
     _lastMiMoAvail = nowAvail;
-    if (Date.now() - _lastRefresh > 5000) { _lastRefresh = Date.now(); await refreshModels(); }
+    await _debouncedRefresh("mimo");
     return;
   }
   _lastMiMoAvail = nowAvail;
   if (nowAvail && _lastRefresh > 0) {
     const models = await getModels();
     if (!models.some(m => SEP_MIMO && (m.model || "").replace(":latest", "").startsWith(SEP_MIMO))) {
-      log(`[mimo] Key 已设置但无 MiMo 模型 — 刷新中`);
-      if (Date.now() - _lastRefresh > 5000) { _lastRefresh = Date.now(); await refreshModels(); }
+      log(t("mimoKeyNoModels"));
+      await _debouncedRefresh("mimo-nomodel");
     }
   }
 }
@@ -1877,7 +703,7 @@ app.get("/api/stats", async c => {
 
 // ── Force model refresh endpoint (like wienans refreshModels command) ──
 app.post("/api/refresh", async c => {
-  log("已请求强制刷新模型");
+  log(t("modelRefreshing"));
   const start = Date.now();
   await refreshModels();
   const models = await getModels();
@@ -1900,7 +726,7 @@ app.post("/api/diagnostics", async c => {
 
   const results = {
     proxy: "Snet",
-    version: "420.96.00",
+    version: SNET_VERSION,
     timestamp: new Date().toISOString(),
     authenticated: isDeepSeekAvailable() || isMiMoAvailable(),
     concurrency_manager: ModelConcurrencyManager.getInstance().getStats(),
@@ -2065,29 +891,13 @@ app.get("/v1/models", async c => {
     const maxPrompt = Math.min(ctxLen - 4096, ctxLen);
     const thinkingModes = getThinkingModes(rawId);
 
-    function thin(name) {
-      if (vsc) return name;
-      return name.length > 20 ? name.replace(/ /g, "\u2009") : name;
-    }
-
-    const SHORT_TAG = { LOW: "LO", MEDIUM: "MD", HIGH: "HI", MAXIMUM: "MX", XHIGH: "X" };
-
-    function vsTag(baseName, mode) {
-      if (vsc) return ` [${mode}]`;
-      const full = ` [${mode}]`;
-      if ((baseName + full).length <= 20) return full;
-      const short = SHORT_TAG[mode];
-      if (short) return ` [${short}]`;
-      return full;
-    }
-
     function pushV1Model(name, idSuffix) {
       data.push({
         id: `${id}${idSuffix}`,
         object: "model",
         created: nowTs,
         owned_by: "OpenCode",
-        name: thin(name),
+        name: _thin(name, vsc),
         model_picker_enabled: isPickerEnabled(rawId),
         version: `${family.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}`,
         capabilities: {
@@ -2119,7 +929,7 @@ app.get("/v1/models", async c => {
     if (thinkingModes.length > 0) {
       pushV1Model(name, "");
       for (const mode of thinkingModes) {
-        const tag = vsTag(name, mode);
+        const tag = _vsTag(name, mode, vsc);
         pushV1Model(`${name}${tag}`, ` [${mode}]`);
       }
     } else {
@@ -2203,7 +1013,7 @@ app.post("/v1/chat/completions", async c => {
   // ── Early model mapping & session context (before expensive body processing) ──
   const goModel = mapModel(model);
   const provider = isDeepSeekModel(goModel) ? "deepseek" : "mimo";
-  const reasoningCtx = createReasoningContext(messages, goModel, getWorkspaceRoot(messages), clientTag, provider, thinkingTag);
+  const reasoningCtx = createReasoningContext(messages, goModel, getWorkspaceRoot(messages), clientTag, provider, thinkingTag, { _sessionRegistry, _workspaceSessions });
   // DEBUG: log raw first user message (VS context block) on every request, hidden
   if (messages.length > 0) {
     const firstUser = messages.find(m => (m.role || "").toLowerCase() === "user");
@@ -2220,8 +1030,9 @@ app.post("/v1/chat/completions", async c => {
       return c.json({ error: { message: "Service temporarily unavailable", type: "server_error", code: "rate_limit_exceeded" } }, 503);
     }
     // Allow request to proceed — taskCompleteOnly will be set downstream
+  } else {
+    reasoningCtx.sessionEntry.stopCount = 0;
   }
-  reasoningCtx.sessionEntry.stopCount = 0;
 
   // Rate-limit gate: if this session already hit a 429 recently, return 429
   // immediately so VS stops retrying.
@@ -2252,6 +1063,9 @@ app.post("/v1/chat/completions", async c => {
     // Build system prompt with tool info for agent mode
     let systemMsg = "";
     const userMsgs = [];
+      // ── Vizards-style replay: extract reasoning from assistant messages ──
+      const replayResult = extractReplayedReasoning(messages);
+      let replayedReasoning = replayResult.reasoning;
 
 
     let toolFailStreak = 0;
@@ -2305,17 +1119,14 @@ app.post("/v1/chat/completions", async c => {
       } else if (role === "user") {
         userMsgs.push(m);
 } else if (role === "tool") {
-        // LocalPilot sends tool msgs without proper tool_calls predecessor — validate and drop orphans
-        if (clientTag === "lp") {
-          const hasPrevToolCalls = userMsgs.length > 0 && userMsgs[userMsgs.length - 1].role === "assistant" && userMsgs[userMsgs.length - 1].tool_calls?.length;
-          if (!hasPrevToolCalls) {
-            log("  [lp] dropping orphan tool message (no preceding tool_calls)");
-            continue;
-          }
-        }
+        // UNIVERSAL check: validate tool messages have matching preceding tool_calls
+        // (was LP-only; now applies to ALL clients including DeepSeek/MiMo)
+        const orphanCheck = checkOrphanToolMessage(userMsgs, m, clientTag);
+        if (orphanCheck.drop) continue;
         let tc = typeof m.content === "string" ? m.content : JSON.stringify(m.content || "");
         // Terminal fallback: execute commands server-side when VS terminal is unavailable
-        if (config.terminalFallback !== false && /Failed to find a valid Visual Studio terminal/i.test(tc)) {
+        // CR-1: Explicit opt-in via TERMINAL_FALLBACK_ENABLED=true env var (default: disabled)
+        if (config.terminalFallback === true && /Failed to find a valid Visual Studio terminal/i.test(tc)) {
           const callId = m.tool_call_id;
           const lastMsg = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1] : null;
           if (lastMsg?.role === "assistant" && lastMsg?.tool_calls) {
@@ -2329,15 +1140,31 @@ app.post("/v1/chat/completions", async c => {
                 if (cmd) {
                   // Auto-fix: replace pwsh with powershell (pwsh/PS Core may not be installed)
                   cmd = cmd.replace(/^pwsh(\.exe)?(\s+-)/i, "powershell$2");
+                  // CR-1: Allowlist of safe commands — only permit read-only/development operations
+                  const SAFE_CMD_RE = /^(dir|ls|echo|type|cat|head|tail|find|findstr|where|which|node\s|npm\s|git\s|dotnet\s|python\s|go\s|rustc\s|cargo\s|node\s|tsc\s|eslint\s|prettier\s|pwsh\s+-Command|powershell\s+-Command|Get-ChildItem|Get-Content|Get-Location|Select-String|Test-Path|Write-Output|Get-Process|Get-Service)/i;
+                  // Also block dangerous patterns as additional defense-in-depth
+                  const DANGEROUS_RE = /\b(rmdir\s+\/[sq]\s+\/|del\s+\/[fsq]\s+|format\s+[a-z]:|Remove-Item\s+-Recurse\s+-Force|reg\s+(delete|add)|rm\s+-rf|>\/dev\/|\|.+shutdown|sc\s+(stop|delete))/i;
+                  if (DANGEROUS_RE.test(cmd)) {
+                    log(`[term] BLOCKED dangerous cmd: ${cmd.slice(0, 80)}`);
+                    tc = `Command blocked for safety: ${cmd.slice(0, 150)}`;
+                    userMsgs.push({ role: "tool", tool_call_id: m.tool_call_id || "unknown", content: tc });
+                    continue;
+                  }
+                  if (!SAFE_CMD_RE.test(cmd)) {
+                    log(`[term] BLOCKED non-allowlisted cmd: ${cmd.slice(0, 80)}`);
+                    tc = `Command blocked (not in safe command allowlist): ${cmd.slice(0, 150)}`;
+                    userMsgs.push({ role: "tool", tool_call_id: m.tool_call_id || "unknown", content: tc });
+                    continue;
+                  }
                   const cwd = callArgs.cwd || process.cwd();
-                  const { exec } = await import("node:child_process");
+                  const { execFile } = await import("node:child_process");
                   log(`[term] proxy-exec: ${cmd}`);
-                  // Wrap in powershell -EncodedCommand to avoid quoting issues
+                  // Use execFile with explicit shell to avoid injection
                   const encoded = Buffer.from(cmd, "utf16le").toString("base64");
                   let result, exitCode;
                   try {
                     const outcome = await new Promise((resolve, reject) => {
-                      exec(`powershell -NoProfile -EncodedCommand ${encoded}`, {
+                      execFile("powershell", ["-NoProfile", "-EncodedCommand", encoded], {
                         encoding: "utf8",
                         timeout: 60000,
                         cwd,
@@ -2507,6 +1334,41 @@ app.post("/v1/chat/completions", async c => {
     // Identity override — MUST be first system instruction to override VS built-in
     systemMsg = compactIdentity(goModel, thinkingTag) + (systemMsg ? "\n\n" : "") + systemMsg;
 
+    // Inject available skills reference (compact name list for model awareness)
+    if (_skillNames.length > 0) {
+      systemMsg += "\n\n## Available Skills\n";
+      systemMsg += "You have access to the following skill references. When a task matches a skill's domain, you can apply its patterns and best practices:\n";
+      systemMsg += _skillNames.join(", ") + "\n";
+      systemMsg += "Use relevant skill patterns to guide your approach.";
+    }
+
+    // Auto-match skills based on user's message content
+    // Cache per session to avoid re-matching on every tool call round
+    if (_skillsCache.length > 0 && messages.length > 0) {
+      const sessionKey = reasoningCtx.conv || reasoningCtx.sessionEntry?.id;
+      if (sessionKey && !_skillsMatched.has(sessionKey)) {
+        const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+        if (lastUserMsg?.content) {
+          const content = typeof lastUserMsg.content === "string" ? lastUserMsg.content : JSON.stringify(lastUserMsg.content);
+          const matched = matchSkills(_skillsCache, content);
+          if (matched.length > 0) {
+            _skillsMatched.set(sessionKey, matched);
+            const activationPrompt = buildSkillActivationPrompt(matched, _skillsCache, 3 /* top 3 only */);
+            if (activationPrompt) systemMsg += activationPrompt;
+          } else {
+            _skillsMatched.set(sessionKey, []); // mark as checked, even if no match
+          }
+        }
+      } else if (sessionKey && _skillsMatched.has(sessionKey)) {
+        // Already matched this session — inject same skills without re-scanning
+        const cached = _skillsMatched.get(sessionKey);
+        if (cached?.length > 0) {
+          const activationPrompt = buildSkillActivationPrompt(cached, _skillsCache, 3);
+          if (activationPrompt) systemMsg += activationPrompt;
+        }
+      }
+    }
+
     // Workspace continuity — if this is a new chat in a previously active workspace,
     // enrich the system prompt with a compact summary of the last completed task,
     // stripped of raw tool output clutter. (TaskSync-inspired)
@@ -2645,12 +1507,12 @@ app.post("/v1/chat/completions", async c => {
     }
 
     // Strip orphaned tool_calls before compression (prevents upstream 400)
-    const { messages: validatedMessages, stripped: _strippedOrphaned } = _stripOrphanedToolCalls(apiMessages);
+    const { messages: validatedMessages, stripped: _ } = _stripOrphanedToolCalls(apiMessages);
 
-    // Delta compression (KitPilot): strip historical VS context blocks, compact consumed tool outputs.
-    // Only for VS/VS Insiders clients where context blocks are 16KB+ per turn.
-    const isVSClient = vs2026 || vsInsiders || (clientTag && (clientTag.startsWith("vs") || clientTag.startsWith("vsi")));
-    let deltaMessages = isVSClient ? compressHistory(validatedMessages, true) : validatedMessages;
+    // Delta compression DISABLED for DeepSeek/MiMo — collapsing tool outputs
+    // makes the model think it hasn't read files, causing repeated reads.
+    // Vizards and other OpenAI-compatible proxies pass full uncompressed history.
+    let deltaMessages = validatedMessages;
 
     // DeepSeek/MiMo 自动思考强度（不再依赖模型名标签 L/M/H/MX）
     let effectiveThinkingTag = null;
@@ -2678,22 +1540,20 @@ app.post("/v1/chat/completions", async c => {
 
       // 为 DeepSeek/MiMo 注入 reasoning_content（文档要求：工具调用轮次必须回传，否则 400 错误）
       if ((isDeepSeekModel(goModel) || isMiMoModel(goModel)) && effectiveThinkingTag) {
-        for (const m of deltaMessages) {
+        deltaMessages = deltaMessages.map(m => {
           if (m.role === "assistant" && m.tool_calls?.length && !m.reasoning_content) {
-            m.reasoning_content = reasoningCtx.get(m, goModel) || "";
+            return { ...m, reasoning_content: replayedReasoning || reasoningCtx.get(m, goModel) || "" };
           }
-        }
+          return m;
+        });
       }
     }
 
     // Apply prompt compression
-    let compLevel = config.compressionLevel;
-    if (compLevel === "auto") {
-      const msgCount = userMsgs.length;
-      if (msgCount <= 3) compLevel = "off";
-      else compLevel = "caveman";
-    }
-    const compressedMessages = compressMessages(deltaMessages, compLevel, true);
+    // Compression DISABLED for all clients — stripping text content (even "filler")
+    // makes the model lose context and re-read files. Send full uncompressed messages.
+    // Vizards and other proxies send raw history without compression.
+    const compressedMessages = deltaMessages;
 
     // 确保压缩后 assistant 消息的 reasoning_content 不丢失（DeepSeek + MiMo）
     if (effectiveThinkingTag && (isDeepSeekModel(goModel) || isMiMoModel(goModel))) {
@@ -2705,118 +1565,12 @@ app.post("/v1/chat/completions", async c => {
       }
     }
 
-    let upstreamTools = vsTools || undefined;
+    let upstreamTools = (vsTools && vsTools.length > 0) ? vsTools : undefined;
     const ollamaReq = { model: goModel, messages: compressedMessages, stream: streamMode, tools: upstreamTools, clientTag, sessionId: reasoningCtx.sessionId, thinkingTag: effectiveThinkingTag };
     if (body.chat_template_kwargs != null) ollamaReq.chat_template_kwargs = body.chat_template_kwargs;
     if (body.thinking_token_budget != null) ollamaReq.thinking_token_budget = body.thinking_token_budget;
 
-    // Session keepalive — save compressed messages so background pings keep KV cache warm
     trackSession(reasoningCtx.sessionId, goModel, compressedMessages, clientTag);
-
-    // Cache check (non-streaming only)
-    const ck = streamMode ? null : cacheKey(ollamaReq, reasoningCtx.conv);
-    const cached = ck ? cacheCheck(ck) : null;
-    if (cached) {
-      let { text, toolCalls, hasTools, reasoningContent } = cached.value;
-      if (toolCalls?.length) reasoningCtx.seslog(`\x1b[35m[cache-hit] returning ${toolCalls.length} cached tool calls: ${toolCalls.map(tc => tc.function?.name).join(", ")}\x1b[0m`);
-
-      // Bypass cache if all cached tool calls already have matching results in the current messages.
-      // Prevents infinite loops where the cache keeps returning the same tool calls
-      // even after VS has already fulfilled them.
-      // Checks BOTH the original incoming messages (always have VS's real results)
-      // AND compressedMessages (post-processing) for resilience.
-      let cacheBypassed = false;
-      // Cut session if cached task_complete is being replayed
-      if (toolCalls?.some(tc => tc.function?.name === "task_complete")) {
-        reasoningCtx.seslog(`\x1b[33m[cache] LOOP-BREAK: cached task_complete, cutting session\x1b[0m`);
-        return c.json(oaiResp(text || "Task complete.", undefined, "stop", model));
-      }
-      if (toolCalls?.length) {
-        const cachedIds = new Set(toolCalls.map(tc => tc.id));
-        const cachedNames = new Set(toolCalls.map(tc => tc.function?.name).filter(Boolean));
-        const matched = new Set();
-
-        // Check original incoming messages first (VS's real tool results, never stripped)
-        const checkSource = (source) => {
-          for (const m of source) {
-            if (m.role === "tool" && m.tool_call_id && cachedIds.has(m.tool_call_id)) {
-              matched.add(m.tool_call_id);
-            }
-          }
-        };
-        checkSource(messages);              // original request body
-        if (matched.size < cachedIds.size) checkSource(compressedMessages); // fallback to processed
-
-        // Name-based fallback: if tool_call_id doesn't match but the tool name does
-        // (e.g. get_projects_in_solution result exists under a different call_id)
-        if (matched.size < cachedIds.size) {
-          const unseenNames = [...cachedNames].filter(name => {
-            const unseenId = [...cachedIds].find(id => {
-              const tc = toolCalls.find(t => t.id === id);
-              return tc?.function?.name === name && !matched.has(id);
-            });
-            return unseenId != null;
-          });
-          for (const name of unseenNames) {
-            // Look for any tool result that follows an assistant with this tool name
-            for (let i = 0; i < messages.length; i++) {
-              if (messages[i].role === "assistant" && messages[i].tool_calls?.some(tc => tc.function?.name === name)) {
-                for (let j = i + 1; j < messages.length; j++) {
-                  if (messages[j].role === "tool" && messages[j].tool_call_id) {
-                    const parentCall = messages[i].tool_calls?.find(tc => tc.id === messages[j].tool_call_id);
-                    if (parentCall?.function?.name === name) {
-                      const cachedTc = toolCalls.find(tc => tc.function?.name === name);
-                      if (cachedTc) matched.add(cachedTc.id);
-                      break;
-                    }
-                  }
-                  if (messages[j].role !== "tool") break;
-                }
-              }
-            }
-          }
-        }
-
-        if (matched.size === cachedIds.size) {
-          reasoningCtx.seslog(`\x1b[35m[cache] bypass — all ${cachedIds.size} cached tool calls already fulfilled\x1b[0m`);
-          cacheBypassed = true;
-        }
-      }
-
-      if (!cacheBypassed) {
-        // Loop-break on cache hit: if AI text is telling itself to call task_complete, cut session
-        if (!toolCalls?.length && text && /\b(?:task_complete|mark(?:ed)?\s+(?:the\s+)?task\s+as\s+complete|If\s+you\s+believe\s+the\s+task\s+is\s+done)\b/i.test(text)) {
-            reasoningCtx.seslog(`\x1b[33m[cache] LOOP-BREAK: cutting session (AI telling itself to complete)\x1b[0m`);
-            text = "";
-            hasTools = false;
-        }
-
-        const hasTC = toolCalls?.length && toolCalls.some(tc => tc.function?.name === "task_complete");
-
-        if (clientWantsStream) {
-          return stream(c, async (s) => {
-            const w = (o) => s.write(`data: ${JSON.stringify(o)}\n\n`);
-            const base = { id: chatId, object: "chat.completion.chunk", created, model, system_fingerprint: systemFp };
-            await w({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
-            await _simStream(w, base, hasTools, toolCalls, text, hasTC ? null : reasoningContent);
-            await s.write("data: [DONE]\n\n");
-          });
-        }
-
-        const resp = oaiResp(hasTools ? null : text, hasTools ? toolCalls : undefined, hasTools ? "tool_calls" : "stop", model);
-        if (reasoningContent && !hasTC) {
-          const choice = resp.choices[0];
-          if (_displayReasoning) {
-            choice.message.content = _foldReasoningIntoContent(reasoningContent, choice.message.content || "");
-          } else {
-            addReasoningAliases(choice.message, reasoningContent);
-          }
-        }
-        return c.json(resp);
-      }
-    }
-
-    // Cache bypassed or not cached — going to upstream.
 
     // ── Stream mode: pipe directly from upstream async generator ──
     if (streamMode) {
@@ -2831,14 +1585,17 @@ app.post("/v1/chat/completions", async c => {
         await w({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
 
         const deltas = [];
+        const tcBuilders = new Map(); // accumulate tool call deltas by index (Vizards pattern)
         let tokenCount = 0;
         let hasTools = false;
         let clientGone = false;
         let _reasoningOpen = false;
+        let streamUsage = null;
 
         try {
           for await (const chunk of chatCompletion(ollamaReq)) {
             if (clientGone) break;
+            if (chunk.usage) streamUsage = chunk.usage;
             const msg = chunk.message;
             if (!msg) continue;
             deltas.push(msg);
@@ -2874,23 +1631,42 @@ app.post("/v1/chat/completions", async c => {
               tokenCount++;
             }
 
-            // Tool call deltas (pass through directly — upstream sends incremental OpenAI format)
+            // Tool call deltas — accumulate by index, only emit COMPLETE calls
+            // VS 2026 crashes on null callId — we must never pass partial deltas
             if (msg.tool_calls?.length) {
-              // Close open thinking block when tool calls start
               if (_displayReasoning && _reasoningOpen) {
                 try { await w({ ...base, choices: [{ index: 0, delta: { content: _THINKING_BLOCK_END }, finish_reason: null }] }); }
                 catch { clientGone = true; break; }
                 _reasoningOpen = false;
               }
               hasTools = true;
-              try { await w({ ...base, choices: [{ index: 0, delta: { tool_calls: msg.tool_calls }, finish_reason: null }] }); }
-              catch { clientGone = true; break; }
+              // Accumulate deltas into tcBuilders (same Map used post-stream)
+              for (const tc of msg.tool_calls) {
+                const idx = tc.index ?? 0;
+                let b = tcBuilders.get(idx);
+                if (!b) {
+                  b = { id: tc.id || `call_${crypto.randomUUID().slice(0, 8)}`, type: tc.type || "function", function: { name: "", arguments: "" } };
+                  tcBuilders.set(idx, b);
+                }
+                if (tc.id) b.id = tc.id;
+                if (tc.type) b.type = tc.type;
+                if (tc.function?.name) b.function.name = tc.function.name;
+                if (tc.function?.arguments) b.function.arguments += tc.function.arguments;
+              }
+              // Only emit fully-formed tool calls (those with name + id)
+              const complete = [...tcBuilders.values()].filter(b => b.id && b.function?.name);
+              if (complete.length) {
+                try {
+                  await w({ ...base, choices: [{ index: 0, delta: { tool_calls: complete.map((tc, i) => ({ index: i, id: tc.id || "call_" + crypto.randomUUID().slice(0, 8), type: tc.type || "function", function: { name: tc.function.name, arguments: tc.function.arguments } })) }, finish_reason: null }] });
+                } catch { clientGone = true; break; }
+              }
               tokenCount++;
             }
           }
         } catch (e) {
           if (e instanceof APIError && e.status === 429) {
             _rateLimitedSessions.set(reasoningCtx.conv, { at: Date.now() });
+            log(t("tokenNoDataReason", "stream interrupted by rate limit"));
             await w({ error: { message: "Rate limit exceeded for this session.", type: "rate_limit_exceeded", code: "rate_limit_exceeded" } });
             await s.write("data: [DONE]\n\n");
             return;
@@ -2901,7 +1677,8 @@ app.post("/v1/chat/completions", async c => {
           if (e instanceof APIError && e.status === 400 && /tool|tool_call/i.test(e.message)) {
             err(`  stream tool error: ${_toolNames(ollamaReq.messages)} — ${e.message}`);
           }
-          err(`  流错误: ${e.message}`);
+          log(t("tokenNoDataReason", "stream error"));
+          err(t("streamError", e.message));
           await s.write("data: [DONE]\n\n");
           return;
         }
@@ -2911,35 +1688,20 @@ app.post("/v1/chat/completions", async c => {
           await w({ ...base, choices: [{ index: 0, delta: { content: _THINKING_BLOCK_END }, finish_reason: null }] });
           _reasoningOpen = false;
         }
-        const finishReason = hasTools ? "tool_calls" : "stop";
-        await w({ ...base, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
-        await s.write("data: [DONE]\n\n");
 
-        // Reconstruct full output from deltas
-        let fullText = "";
-        let reasoningContent = null;
-        const tcBuilders = new Map(); // index -> accumulated tool call
-        for (const d of deltas) {
-          if (d.content) fullText += d.content;
-          if (d.reasoning_content) reasoningContent = d.reasoning_content;
-          if (d.reasoning) reasoningContent = d.reasoning;
-          if (d.tool_calls?.length) {
-            for (const tc of d.tool_calls) {
-              const idx = tc.index ?? 0;
-              let b = tcBuilders.get(idx);
-              if (!b) {
-                b = { id: tc.id || `call_${crypto.randomUUID().slice(0, 8)}`, type: tc.type || "function", function: { name: "", arguments: "" } };
-                tcBuilders.set(idx, b);
-              }
-              if (tc.id) b.id = tc.id;
-              if (tc.type) b.type = tc.type;
-              if (tc.function?.name) b.function.name = tc.function.name;
-              if (tc.function?.arguments) b.function.arguments += tc.function.arguments;
-            }
-          }
+        // ── FIXED: Post-stream XML tool call extraction BEFORE [DONE] ──
+        // Reconstruct text/reasoning/tool calls from deltas (fresh map, no double-accumulation)
+        let { fullText, reasoningContent, allToolCalls } = reconstructToolCalls(deltas);
+        // Ensure all tool calls have id
+        for (const tc of allToolCalls) {
+          if (!tc.id) tc.id = callId();
+          if (!tc.type) tc.type = "function";
         }
-        let allToolCalls = [...tcBuilders.values()].map(normalizeToolCall).filter(Boolean);
-        if (!allToolCalls.length && vsTools?.length && fullText) {
+
+        // FIXED: Check for XML tool calls BEFORE deciding finish_reason
+        // This prevents the "XML stream disconnect" where the model returns
+        // XML-formatted tool calls in text content instead of structured deltas
+        if (!allToolCalls.length && (vsTools?.length || hasXMLToolCalls(fullText)) && fullText) {
           const extracted = extractToolCalls(fullText, getWorkspaceRoot(messages), messages);
           if (extracted.toolCalls.length) {
             allToolCalls = extracted.toolCalls;
@@ -2947,6 +1709,10 @@ app.post("/v1/chat/completions", async c => {
             hasTools = true;
           }
         }
+
+        const finishReason = hasTools ? "tool_calls" : "stop";
+        await w({ ...base, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
+        await s.write("data: [DONE]\n\n");
     const rawFullText = fullText;
     const thinkResult = processThinkTags(fullText);
         if (!reasoningContent && thinkResult.reasoning) reasoningContent = thinkResult.reasoning;
@@ -2960,9 +1726,12 @@ app.post("/v1/chat/completions", async c => {
           reasoningCtx.cache(virtualMsg, goModel, reasoningContent);
         }
 
-        // Cache collected output for future non-streaming hits
-        if (ck) {
-          cacheStore(ck, { text: fullText, toolCalls: allToolCalls, hasTools: hasTools || allToolCalls.length > 0, reasoningContent });
+
+        // Token usage logging for streaming path
+        if (streamUsage) {
+          log(t("tokenUsage", streamUsage.prompt_tokens, streamUsage.completion_tokens, streamUsage.total_tokens));
+        } else {
+          log(t("tokenNoData"));
         }
 
         reasoningCtx.seslog(`stream done (${tokenCount} chunk${tokenCount !== 1 ? "s" : ""})`);
@@ -3077,6 +1846,13 @@ app.post("/v1/chat/completions", async c => {
       if (ch.usage) usage = ch.usage;
     }
 
+    // Token usage logging for non-streaming path
+    if (usage) {
+      log(t("tokenUsage", usage.prompt_tokens, usage.completion_tokens, usage.total_tokens));
+    } else {
+      log(t("tokenNoData"));
+    }
+
     if (/rate limit/i.test(fullText)) {
       _rateLimitedSessions.set(reasoningCtx.conv, { at: Date.now() });
     }
@@ -3091,7 +1867,15 @@ app.post("/v1/chat/completions", async c => {
     if (nativeCalls?.length) {
       const hasTaskComplete = nativeCalls.some(tc => tc.function?.name === "task_complete");
       allToolCalls = nativeCalls.map(normalizeToolCall).filter(Boolean);
-      if (!hasTaskComplete) cleanText = "";
+          // Ensure all tool calls have id (DeepSeek/MiMo may return null id in some cases)
+          allToolCalls = allToolCalls.map(tc => ({
+            ...tc,
+            id: tc.id || callId(),
+            type: tc.type || "function",
+          }));
+      // H7: Preserve assistant text even when task_complete is absent —
+      // the text may contain useful explanation about tool calls.
+      if (!hasTaskComplete && cleanText.length < 50) cleanText = "";
     } else if (vsTools?.length) {
       const extracted = extractToolCalls(fullText, getWorkspaceRoot(messages), messages);
       if (extracted.toolCalls.length) {
@@ -3137,7 +1921,6 @@ app.post("/v1/chat/completions", async c => {
       reasoningCtx.cache(virtualMsg, goModel, reasoningContent);
     }
 
-    if (ck) cacheStore(ck, { text: cleanText, toolCalls: allToolCalls, hasTools, reasoningContent });
 
 
     // DeepSeek thinking mode: when the model puts everything in <think> tags,
@@ -3201,7 +1984,7 @@ app.post("/v1/chat/completions", async c => {
     const hasTaskComplete = allToolCalls.length && allToolCalls.some(tc => tc.function?.name === "task_complete");
     // When task_complete is present, suppress text content — only the tool call matters.
     // Previously cleanText was kept, giving VS three outputs (content + tool_calls + reasoning).
-    const resp = oaiResp(hasTools ? null : cleanText, hasTools ? allToolCalls : undefined, hasTools ? "tool_calls" : "stop", model, usage);
+        const resp = oaiResp(hasTools ? null : cleanText, hasTools ? allToolCalls : undefined, hasTools ? "tool_calls" : "stop", model, usage);
     if (hasTools) debug(`${reasoningCtx.sessionPrefix} \x1b[35m[TOOLS-TO-VS] ${allToolCalls.map(tc => `${tc.function.name}(${tc.function.arguments})`).join(" \u2502 ")}\x1b[0m`);
     else debug(`${reasoningCtx.sessionPrefix} \x1b[35m[TEXT-TO-VS] ${(cleanText || "").slice(0, 200).replace(/\n/g,"\\n")}\x1b[0m`);
 
@@ -3226,10 +2009,12 @@ app.post("/v1/chat/completions", async c => {
       }
     }
 
+    // ── Vizards-style replay: embed reasoning into response for next request ──
     if (reasoningContent && !hasTaskComplete) {
       const choice = resp.choices[0];
       if (_displayReasoning) {
         choice.message.content = _foldReasoningIntoContent(reasoningContent, choice.message.content || "");
+          choice.message.content = embedReasoning(choice.message.content, reasoningContent);
       } else {
         addReasoningAliases(choice.message, reasoningContent);
       }
@@ -3241,7 +2026,7 @@ app.post("/v1/chat/completions", async c => {
         const w = (o) => s.write(`data: ${JSON.stringify(o)}\n\n`);
         const base = { id: chatId, object: "chat.completion.chunk", created, model, system_fingerprint: systemFp };
         await w({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
-        await _simStream(w, base, hasTools, allToolCalls, cleanText, hasTaskComplete ? null : reasoningContent);
+                await _simStream(w, base, hasTools, allToolCalls, cleanText, hasTaskComplete ? null : reasoningContent);
         await s.write("data: [DONE]\n\n");
       });
     }
@@ -3255,10 +2040,12 @@ app.post("/v1/chat/completions", async c => {
     }
     if (e instanceof APIError && e.status === 429) {
       _rateLimitedSessions.set(reasoningCtx.conv, { at: Date.now() });
+      log(t("tokenNoDataReason", "rate limited"));
       const errResp = apiErr(e);
       return c.json(errResp.body, errResp.status);
     }
-    err(`  错误: ${e.message}`);
+    err(t("apiError") + ": " + e.message);
+    log(t("tokenNoDataReason", "error"));
     const errResp = apiErr(e);
     return c.json(errResp.body, errResp.status);
   }
@@ -3345,7 +2132,8 @@ app.post("/v1/engines/copilot-codex/completions", async c => {
 
     return c.json(completion(sanitized));
   } catch (e) {
-    err(`  完成错误: ${e.message}`);
+    log(t("tokenNoDataReason", "completions error"));
+    err(t("apiError") + ": " + e.message);
     const errResp = apiErr(e);
     return c.json(errResp.body, errResp.status);
   }
@@ -3462,7 +2250,7 @@ app.post("/api/chat", async c => {
   const vsTools = body.tools;
   _dumpToolSchemas(vsTools);
   const provider = isDeepSeekModel(model) ? "deepseek" : "mimo";
-  const reasoningCtx = createReasoningContext(messages, model, getWorkspaceRoot(messages), clientTag, provider, apiThinking);
+  const reasoningCtx = createReasoningContext(messages, model, getWorkspaceRoot(messages), clientTag, provider, apiThinking, { _sessionRegistry, _workspaceSessions });
   // DEBUG: log raw first user message (VS context block) on every request, hidden
   if (messages.length > 0) {
     const firstUser = messages.find(m => (m.role || "").toLowerCase() === "user");
@@ -3509,14 +2297,31 @@ app.post("/api/chat", async c => {
           }
         }
         else if (role === "tool") {
-          if (clientTag === "lp") {
-            const hasPrev = userMsgs.length > 0 && userMsgs[userMsgs.length - 1].role === "assistant" && userMsgs[userMsgs.length - 1].tool_calls?.length;
-            if (!hasPrev) { log("  [lp] dropping orphan tool message (/api/chat)"); continue; }
-          }
+          // UNIVERSAL check: validate tool messages have matching preceding tool_calls
+          const orphanCheck = checkOrphanToolMessage(userMsgs, m, clientTag);
+          if (orphanCheck.drop) continue;
           userMsgs.push({ role: "tool", tool_call_id: m.tool_call_id || "unknown", content: typeof m.content === "string" ? m.content : JSON.stringify(m.content || "") });
         }
         else if (role === "user") userMsgs.push(m);
         // unknown roles are silently dropped
+      }
+
+      // Auto-match skills in /api/chat path (same logic as v1/chat/completions)
+      if (_skillsCache.length > 0) {
+        const sessionKey = c.req.header("x-session-id") || body.model;
+        if (sessionKey && !_skillsMatched.has(sessionKey)) {
+          const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+          if (lastUserMsg?.content) {
+            const content = typeof lastUserMsg.content === "string" ? lastUserMsg.content : JSON.stringify(lastUserMsg.content);
+            const matched = matchSkills(_skillsCache, content);
+            _skillsMatched.set(sessionKey, matched?.length ? matched : []);
+          }
+        }
+        const cached = _skillsMatched.get(sessionKey);
+        if (cached?.length > 0) {
+          const ap = buildSkillActivationPrompt(cached, _skillsCache, 3);
+          if (ap) systemMsg += ap;
+        }
       }
 
       // Identity override — MUST be first system instruction
@@ -3540,7 +2345,7 @@ app.post("/api/chat", async c => {
               const createdAt = new Date().toISOString();
               await s.write(JSON.stringify({
                 model, created_at: createdAt,
-                message: { role: "assistant", content: "", tool_calls: [{ function: { name: "task_complete", arguments: {} } }] },
+                message: { role: "assistant", content: "", tool_calls: [{ id: callId(), type: "function", function: { name: "task_complete", arguments: "{}" } }] },
                 done: true, done_reason: "tool_calls",
                 total_duration: 0, load_duration: 0, prompt_eval_count: 0, prompt_eval_duration: 0, eval_count: 0, eval_duration: 0,
               }) + "\n");
@@ -3568,20 +2373,16 @@ app.post("/api/chat", async c => {
         }
       }
 
-      const { messages: validatedMessages, stripped: _strippedOrphaned2 } = _stripOrphanedToolCalls(apiMessages);
+      const { messages: validatedMessages, stripped: _ } = _stripOrphanedToolCalls(apiMessages);
 
       // Delta compression (KitPilot): strip historical VS context blocks, compact consumed tool outputs
       const isVSClient = clientTag === "vs" || clientTag === "vsi" || (clientTag && clientTag.startsWith("vs"));
-      let deltaMessages = isVSClient ? compressHistory(validatedMessages, true) : validatedMessages;
+      // Compression DISABLED — sending full uncompressed history
+      let deltaMessages = validatedMessages;
 
-      let compLevel = config.compressionLevel;
-      if (compLevel === "auto") {
-        const msgCount = userMsgs.length;
-        if (msgCount <= 3) compLevel = "off";
-        else compLevel = "caveman";
-      }
-      const compressedMessages = compressMessages(deltaMessages, compLevel, true);
-      const reqBody = { model, messages: compressedMessages, stream: false, options: body.options, format: body.format, clientTag, tools: vsTools || undefined };
+      const compressedMessages = deltaMessages;
+      let chatTools = (vsTools && vsTools.length > 0) ? vsTools : undefined;
+      const reqBody = { model, messages: compressedMessages, stream: false, options: body.options, format: body.format, clientTag, tools: chatTools };
       if (body.chat_template_kwargs != null) reqBody.chat_template_kwargs = body.chat_template_kwargs;
       if (body.thinking_token_budget != null) reqBody.thinking_token_budget = body.thinking_token_budget;
 
@@ -3600,14 +2401,22 @@ app.post("/api/chat", async c => {
       let chatUsage = null;
       let apiReasoning = null;
       for (const c of chunks) { if (c.usage) chatUsage = c.usage; if (c.message?.reasoning_content) apiReasoning = c.message.reasoning_content; }
-      let { content: cleanText, toolCalls: rawCalls } = vsTools?.length ? extractToolCalls(fullText, getWorkspaceRoot(messages)) : { content: fullText, toolCalls: [] };
+      // Token usage logging for /api/chat
+      if (chatUsage) {
+        log(t("tokenUsage", chatUsage.prompt_tokens, chatUsage.completion_tokens, chatUsage.total_tokens));
+      } else {
+        log(t("tokenNoData"));
+      }
+      // FIXED: Always check for XML tool calls, even without explicit vsTools
+      const shouldExtract = vsTools?.length || isDeepSeekModel(model) || isMiMoModel(model) || hasXMLToolCalls(fullText);
+      let { content: cleanText, toolCalls: rawCalls } = shouldExtract ? extractToolCalls(fullText, getWorkspaceRoot(messages)) : { content: fullText, toolCalls: [] };
       const thinkResult = processThinkTags(cleanText);
       cleanText = thinkResult.content;
       const reasoningContent = apiReasoning || thinkResult.reasoning;
       // Cache reasoning for next turn via conversation-scoped cross-request cache
       if (reasoningContent) {
         const virtualMsg = rawCalls.length
-          ? { tool_calls: rawCalls.map(tc => ({ function: { name: tc.function.name, arguments: tc.function.arguments } })) }
+          ? { tool_calls: rawCalls.map(tc => ({ id: tc.id || callId(), type: tc.type || "function", function: { name: tc.function.name, arguments: tc.function.arguments } })) }
           : { content: fullText };
         reasoningCtx.cache(virtualMsg, model, reasoningContent);
       }
@@ -3621,6 +2430,8 @@ app.post("/api/chat", async c => {
       }
       // Convert OpenAI format to Ollama format (drop id/type, parse args to object)
       const toolCalls = rawCalls.map(tc => ({
+        id: tc.id || callId(),
+        type: tc.type || "function",
         function: { name: tc.function.name, arguments: (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })() },
       }));
 
@@ -3645,8 +2456,13 @@ app.post("/api/chat", async c => {
       if (toolCalls.length) {
         const tcMsg = { role: "assistant", content: "", tool_calls: toolCalls };
         if (reasoningContent) {
-          if (_displayReasoning) tcMsg.content = _foldReasoningIntoContent(reasoningContent, "");
-          else tcMsg.reasoning_content = reasoningContent;
+          if (_displayReasoning) {
+              tcMsg.content = _foldReasoningIntoContent(reasoningContent, "");
+              tcMsg.content = embedReasoning(tcMsg.content, reasoningContent);
+            } else {
+              tcMsg.reasoning_content = reasoningContent;
+              tcMsg.content = embedReasoning(tcMsg.content || "", reasoningContent);
+            }
         }
         await s.write(JSON.stringify({ model: body.model, created_at: createdAt, message: tcMsg, done: false }) + "\n");
       } else {
@@ -3668,7 +2484,8 @@ app.post("/api/chat", async c => {
       await s.write(JSON.stringify({ model: body.model, created_at: createdAt, message: { role: "assistant", content: "" }, done: true, done_reason: toolCalls.length ? "tool_calls" : "stop", total_duration: duration * 1e6, load_duration: 0, prompt_eval_count: chatUsage?.prompt_tokens || 0, prompt_eval_duration: 0, eval_count: chatUsage?.completion_tokens || 0, eval_duration: 0 }) + "\n");
 
     } catch (e) {
-      err(`  错误: ${e.message}`);
+      log(t("tokenNoDataReason", "api/chat error"));
+      err(t("apiError") + ": " + e.message);
       await s.write(JSON.stringify({ model: body.model, created_at: new Date().toISOString(), message: { role: "assistant", content: `Error: ${e.message}` }, done: true, done_reason: "error" }) + "\n");
     }
   });
@@ -3704,7 +2521,8 @@ app.post("/api/generate", async c => {
       const duration = Date.now() - startTime;
       await s.write(JSON.stringify({ model: body.model, created_at: new Date().toISOString(), response: body.stream === false ? full : "", done: true, done_reason: "stop", context: null, total_duration: duration * 1e6, load_duration: 0, prompt_eval_count: 0, prompt_eval_duration: 0, eval_count: 0, eval_duration: 0 }) + "\n");
     } catch (e) {
-      err(`  错误: ${e.message}`);
+      log(t("tokenNoDataReason", "api/generate error"));
+      err(t("apiError") + ": " + e.message);
       await s.write(JSON.stringify({ model: body.model, created_at: new Date().toISOString(), response: `Error: ${e.message}`, done: true }) + "\n");
     }
   });
@@ -3713,7 +2531,7 @@ app.post("/api/generate", async c => {
 // ── Stop server ──
 
 app.get("/stop", c => {
-  log("已通过 /stop 请求关闭");
+  log(t("serviceStopping"));
   keepaliveShutdown();
   setTimeout(() => process.exit(0), 100);
   return c.json({ status: "shutting down" });
@@ -3722,6 +2540,40 @@ app.get("/stop", c => {
 // ── Passthrough proxy ──
 // Forwards unmatched paths to a configurable upstream (e.g., OpenCode API)
 // Controlled by PASSTHROUGH_BASE_URL env var
+// CR-2: SSRF protection — validates target URL, blocks private IPs, enforces timeout
+
+// Private/internal IP ranges blocked for SSRF protection
+const _BLOCKED_IP_PATTERNS = [
+  /^127\./,                           // loopback
+  /^10\./,                            // class A private
+  /^172\.(1[6-9]|2\d|3[01])\./,      // class B private
+  /^192\.168\./,                      // class C private
+  /^169\.254\./,                      // link-local
+  /^0\./,                             // unspecified
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGN
+  /^fc00:/i, /^fe80:/i, /^::1$/i,   // IPv6 private
+];
+
+function _isPrivateHost(hostname) {
+  if (!hostname) return true;
+  // Block raw IP addresses in private ranges
+  if (_BLOCKED_IP_PATTERNS.some(re => re.test(hostname))) return true;
+  // Block localhost aliases
+  if (hostname === "localhost" || hostname === "0.0.0.0" || hostname === "[::]" || hostname === "127.0.0.1" || hostname === "::1") return true;
+  return false;
+}
+
+function _validatePassthroughUrl(targetUrl) {
+  try {
+    const u = new URL(targetUrl);
+    if (_isPrivateHost(u.hostname)) {
+      return { valid: false, error: "Target host resolves to a private/internal address" };
+    }
+    return { valid: true, parsed: u };
+  } catch {
+    return { valid: false, error: "Invalid target URL" };
+  }
+}
 
 function isPassthroughPath(pathname) {
   if (!config.passthroughBaseUrl) return false;
@@ -3732,33 +2584,54 @@ function isPassthroughPath(pathname) {
 async function handlePassthrough(c) {
   const url = new URL(c.req.url);
   const method = c.req.method;
+
+  // CR-2: Validate target URL before proxying
+  const targetUrl = `${config.passthroughBaseUrl}${url.pathname}${url.search}`;
+  const urlCheck = _validatePassthroughUrl(targetUrl);
+  if (!urlCheck.valid) {
+    err(`  passthrough blocked: ${urlCheck.error} (${targetUrl})`);
+    return c.json({ error: { message: "Bad gateway", type: "server_error", code: "bad_gateway" } }, 502);
+  }
+
   let body = null;
 
   if (method !== "GET" && method !== "HEAD") {
     try { body = await c.req.text(); } catch {}
   }
 
+  // CR-2: Filter sensitive headers before forwarding
+  const SENSITIVE_HEADERS = new Set([
+    "host", "connection", "content-length", "cookie", "set-cookie",
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+    "x-real-ip", "forwarded", "via"
+  ]);
   const incomingHeaders = {};
   for (const [k, v] of Object.entries(c.req.header())) {
-    if (!k || ["host", "connection", "content-length"].includes(k.toLowerCase())) continue;
+    if (!k || SENSITIVE_HEADERS.has(k.toLowerCase())) continue;
     incomingHeaders[k] = v;
   }
 
-  const key = config.apiKey;
-  if (key && !incomingHeaders["authorization"]) {
-    incomingHeaders["authorization"] = `Bearer ${key}`;
-  }
+  // The passthrough upstream should be configured with its own auth in PASSTHROUGH_BASE_URL
 
   if (body && !incomingHeaders["content-type"]) {
     incomingHeaders["content-type"] = "application/json";
   }
 
+  // CR-2: Add timeout to prevent indefinite hang
+  const controller = new AbortController();
+  const timeoutMs = config.passthroughTimeoutMs || 30000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try { timer.unref?.(); } catch {}
+
   try {
-    const upstream = await fetchWithAgent(`${config.passthroughBaseUrl}${url.pathname}${url.search}`, {
+    const upstream = await fetchWithAgent(targetUrl, {
       method,
       headers: incomingHeaders,
+      signal: controller.signal,
       ...(body ? { body } : {}),
     });
+
+    clearTimeout(timer);
 
     const respHeaders = new Headers(upstream.headers);
     respHeaders.set("access-control-allow-origin", "*");
@@ -3769,7 +2642,12 @@ async function handlePassthrough(c) {
       headers: respHeaders,
     });
   } catch (e) {
-    err(`  透传错误: ${e.message}`);
+    clearTimeout(timer);
+    if (e.name === "AbortError") {
+      err(t("passthroughTimeout", targetUrl));
+      return c.json({ error: { message: "Upstream request timed out", type: "server_error", code: "gateway_timeout" } }, 504);
+    }
+    err(t("passthroughError", e.message));
     return c.json({ error: { message: `Upstream unreachable: ${e.message}`, type: "server_error", code: "bad_gateway" } }, 502);
   }
 }
@@ -3805,7 +2683,7 @@ const host = config.host;
     s.listen(port, host, () => { s.close(() => r(true)); });
   });
   if (!isFree) {
-    log(`端口 ${port} 已被占用，尝试使用端口 ${port + 1}…`);
+    log(t("portInUse", port, port + 1));
     port++;
   }
 
@@ -3815,7 +2693,7 @@ const host = config.host;
       await runAsService({
         onStart: _runServer,
         onStop: () => {
-          log("服务正在停止…");
+          log(t("serviceStopping"));
           if (serverRef?.stop) serverRef.stop(true);
           else if (serverRef?.close) { serverRef.closeAllConnections?.(); serverRef.close(); }
         }
@@ -3930,9 +2808,22 @@ const hasMiMo = models.some(m => isMiMoModel(m.model));
 if (hasDS) log(`\x1b[32m${t("modelLoaded")}\x1b[0m`);
 if (hasMiMo) log(`\x1b[35m${t("mimoLoaded")}\x1b[0m`);
 
+// Load skills synchronously so banner includes the count
+try {
+  const skills = await loadSkills();
+  _skillsLoaded = skills.length;
+  _skillNames = skills.map(s => s.name);
+  _skillsCache = skills;
+  log(`\x1b[33m[skills] ${_skillsLoaded} skills loaded\x1b[0m`);
+} catch (e) {
+  log(`\x1b[31m[skills] load failed: ${e.message}\x1b[0m`);
+}
+
 let _buildDate = "";
 try {
-  const raw = require("fs").readFileSync(VERSION_FILE, "utf8").trim();
+  // M11: Use async import instead of require("fs") (CJS-in-ESM anti-pattern)
+  const fs = await import("node:fs");
+  const raw = fs.readFileSync(VERSION_FILE, "utf8").trim();
   const ts = Number(raw);
   if (ts > 0) _buildDate = new Date(ts).toISOString().slice(0, 10);
 } catch {}
@@ -3940,18 +2831,13 @@ try {
 let _bannerLines = [];
 const P = (s) => { _bannerLines.push(s); };
 const _G = "\x1b[32m"; // green for active debug
-const _cmdLine = () => {
-  const dc = _isDebug() ? _G : C;
-  return line(S + "Commands: " + C + "s" + R + W + "/" + R + C + "stop" + R + S + "  " + C + "r" + R + W + "/" + R + C + "restart" + R + S + "  " + C + "u" + R + W + "/" + R + C + "update" + R + S + "  " + dc + "d" + R + W + "/" + R + dc + "debug" + R + S + "  \u2190\u2192 collapse  \u2191\u2193PgUp/PgDn" + R);
-};
+const _cmdLine = () => "";
 
-P("");
 P(W + "┌" + hr + W + "┐" + R);                                            // ┌───┐
 P(line("[ Shunnet.top ] Copilot Proxy" + R));
 const portLabel = port === 11434 ? `port: ${port} (default)` : `port: ${port}`;
 P(line(S + portLabel + "  |  built " + C + _buildDate + R + S + "  |  models.dev" + R));
-P(_cmdLine());
-P("");
+// P(_cmdLine()); // removed empty commands line
 
 // Split models into sections by separator order (DeepSeek → MiMo)
 	const dsStart = models.findIndex(m => m.model === `${SEP_DEEPSEEK}:latest`);
@@ -3967,8 +2853,8 @@ P("");
 	const _bannerCollapsed = [..._bannerLines];
 	if (hasDS) _bannerCollapsed.push(line(S + C + "▶ " + R + S + "DeepSeek (" + dsModels.length + ")" + R));
 	if (hasMiMo) _bannerCollapsed.push(line(S + C + "▶ " + R + S + "MiMo (" + mimoModels.length + ")" + R));
+	if (_skillsLoaded > 0) _bannerCollapsed.push(line(S + C + "▶ " + R + S + "Skills (" + _skillsLoaded + ")" + R));
 	_bannerCollapsed.push(W + "└" + hr + W + "┘" + R);
-	_bannerCollapsed.push("");
 
 	function printTable(list) {
 	  for (const m of list) {
@@ -4019,14 +2905,18 @@ P("");
 	  printSimple(mimoModels, "MiMo");
 	}
 
+	if (_skillsLoaded > 0) {
+	  P(line(S + "▶ " + "Skills (" + _skillsLoaded + ")".padEnd(54) + R));
+	}
+
 P(W + "\u2514" + hr + W + "\u2518" + R);                                            // └───┘
-P("");
 
 // Print banner once (accumulated above) — avoids double-print from P() + _redraw()
 const _isTTY = !!(process.stdout.isTTY ?? process.stdin.isTTY);
 if (_isPlainMode) {
   log(`[Shunnet.top] Copilot Proxy  |  port: ${port}  |  models.dev`);
   if (hasDS) log(`DeepSeek (${dsModels.length}): ${dsModels.map(m => m.name).join(", ")}`);
+  if (_skillsLoaded > 0) log(`[33m[skills] ${_skillsLoaded} loaded[0m`);
   if (hasMiMo) log(`MiMo (${mimoModels.length}): ${mimoModels.map(m => m.name).join(", ")}`);
 } else if (_isTTY) {
   // Print banner once, then enable dashboard for live updates
@@ -4039,20 +2929,20 @@ if (_isTTY && !_isPlainMode) {
   onCommand((cmd) => {
     if (cmd === "stop") {
       disableDashboard();
-      log("正在关闭…");
+      log(t("serviceStopping"));
       if (serverRef?.stop) serverRef.stop(true);
       else if (serverRef?.close) { serverRef.closeAllConnections?.(); serverRef.close(() => process.exit(0)); }
       setTimeout(() => process.exit(0), 2000);
     } else if (cmd === "restart") {
       disableDashboard();
-      log("正在重启…");
+      log(t("serviceRestarting"));
       if (serverRef?.stop) { serverRef.stop(true); restartSelf(); }
       else if (serverRef?.close) { serverRef.closeAllConnections?.(); serverRef.close(() => restartSelf()); }
       else { restartSelf(); }
       setTimeout(() => process.exit(42), 5000);
     } else if (cmd === "update") {
       disableDashboard();
-      log("正在更新并重启…");
+      log(t("serviceUpdating"));
       if (serverRef?.stop) { serverRef.stop(true); restartSelf(43); }
       else if (serverRef?.close) { serverRef.closeAllConnections?.(); serverRef.close(() => restartSelf(43)); }
       else { restartSelf(43); }
@@ -4060,8 +2950,9 @@ if (_isTTY && !_isPlainMode) {
     } else if (cmd === "debug") {
       Bun.env.DEBUG = _isDebug() ? "" : "1";
       const newLine = _cmdLine();
-      _bannerLines[8] = newLine;
-      _bannerCollapsed[8] = newLine;
+      // Update command line in banner dynamically (not hardcoded index)
+      const cmdIdx = _bannerLines.findIndex(l => l && l.includes("Commands:"));
+      if (cmdIdx >= 0) { _bannerLines[cmdIdx] = newLine; _bannerCollapsed[cmdIdx] = newLine; }
       redrawBanner();
       log(`DEBUG ${_isDebug() ? "ON" : "OFF"}`);
     }
@@ -4080,18 +2971,18 @@ if (!_isTTY) (async () => {
     process.stdin.on("data", (data) => {
       const cmd = data.trim().toLowerCase();
       if (cmd === "stop" || cmd === "s" || cmd === "exit" || cmd === "e" || cmd === "quit" || cmd === "q") {
-        log("正在关闭…");
+        log(t("serviceStopping"));
         if (serverRef?.stop) serverRef.stop(true);
         else if (serverRef?.close) { serverRef.closeAllConnections?.(); serverRef.close(() => process.exit(0)); }
         setTimeout(() => process.exit(0), 2000);
       } else if (cmd === "restart" || cmd === "r") {
-        log("正在重启…");
+        log(t("serviceRestarting"));
         if (serverRef?.stop) { serverRef.stop(true); restartSelf(); }
         else if (serverRef?.close) { serverRef.closeAllConnections?.(); serverRef.close(() => restartSelf()); }
         else { restartSelf(); }
         setTimeout(() => process.exit(42), 5000);
       } else if (canUpdate && (cmd === "update" || cmd === "u")) {
-        log("正在更新并重启…");
+        log(t("serviceUpdating"));
         if (serverRef?.stop) { serverRef.stop(true); restartSelf(43); }
         else if (serverRef?.close) { serverRef.closeAllConnections?.(); serverRef.close(() => restartSelf(43)); }
         else { restartSelf(43); }
@@ -4131,7 +3022,7 @@ async function restartSelf(exitCode = 42) {
     }
     await new Promise(r => setTimeout(r, 500));
   } catch (e) {
-    err("自重启启动失败: " + e.message);
+    err(t("serviceRestarting") + " failed: " + e.message);
     await new Promise(r => setTimeout(r, 1000));
   }
   process.exit(exitCode);
@@ -4139,20 +3030,31 @@ async function restartSelf(exitCode = 42) {
 
 // ── OS signal handling (copilot-proxy pattern) ──
 let _shuttingDown = false;
+let _shutdownTimer = null;
 function gracefulShutdown(signal) {
   if (_shuttingDown) return;
   _shuttingDown = true;
-  log(`收到 ${signal} — 正在优雅关闭（30 秒超时）…`);
+  log(t("gracefulShutdown", signal));
   _recentlyCompleted.clear();
   keepaliveShutdown();
-  setTimeout(() => { err("强制退出：关闭超时"); process.exit(1); }, 30000);
+
+  // Single graceful timer — 10s max, force exit if hung
+  _shutdownTimer = setTimeout(() => { err(t("shutdownTimeout")); process.exit(1); }, 10000);
+
+  const done = () => {
+    if (_shutdownTimer) { clearTimeout(_shutdownTimer); _shutdownTimer = null; }
+    process.exit(0);
+  };
+
   if (serverRef?.stop) {
     serverRef.stop(true);
+    setTimeout(done, 2000);
   } else if (serverRef?.close) {
     serverRef.closeAllConnections?.();
-    serverRef.close(() => process.exit(0));
+    serverRef.close(() => done());
+  } else {
+    done();
   }
-  setTimeout(() => process.exit(0), 2000);
 }
 
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));

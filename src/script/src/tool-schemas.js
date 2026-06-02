@@ -96,7 +96,7 @@ export function applyToolDefaults(toolName, args) {
       else if (field === "background") result[field] = false;
       else if (field === "maxResults") result[field] = 20;
       else if (field === "startLine") result[field] = 1;
-      else if (field === "endLine") result[field] = 999999;
+      else if (field === "endLine") result[field] = 0; // 0 = VS reads entire file
       else if (field === "navigationType") result[field] = 1;
       else if (field === "headLines" || field === "tailLines") result[field] = 0;
       else if (field === "stop") result[field] = false;

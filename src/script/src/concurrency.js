@@ -67,9 +67,14 @@ export class ConcurrencyQueue {
   async acquire(priority = 0) {
     this._totalQueued++;
     if (this.running >= this.maxConcurrency) {
-      await new Promise((resolve) => {
-        const item = { resolve, priority };
+      // H3: Add configurable timeout to prevent indefinite deadlock
+      const cfg = getConfig();
+      const timeoutMs = Math.max(30000, cfg.requestTimeoutMs || 120000);
+      let timer = null;
+      await new Promise((resolve, reject) => {
+        const item = { resolve, reject, priority };
         let inserted = false;
+        let settled = false; // prevent double-settle from timeout + release
         for (let i = 0; i < this.queue.length; i++) {
           if (priority > this.queue[i].priority) {
             this.queue.splice(i, 0, item);
@@ -78,7 +83,17 @@ export class ConcurrencyQueue {
           }
         }
         if (!inserted) this.queue.push(item);
-      });
+        // Wrap resolve/reject to track settlement
+        const origResolve = item.resolve;
+        const origReject = item.reject;
+        item.resolve = () => { if (!settled) { settled = true; origResolve(); } };
+        item.reject = (err) => { if (!settled) { settled = true; origReject(err); } };
+        // Timeout guard: reject if queued too long
+        timer = setTimeout(() => {
+          const idx = this.queue.indexOf(item);
+          if (idx >= 0) { this.queue.splice(idx, 1); item.reject(new Error("Queue acquire timeout")); }
+        }, timeoutMs);
+      }).finally(() => { if (timer) clearTimeout(timer); });
     }
     this.running++;
   }
@@ -89,15 +104,22 @@ export class ConcurrencyQueue {
     this._releaseNext();
   }
 
+  // H1: Use 'if' not 'while' — each release() vacates exactly one slot.
+  // 'while' causes concurrency limit violation because running++ happens
+  // in the microtask after resolve(), not synchronously.
   _releaseNext() {
-    while (this.running < this.maxConcurrency && this.queue.length > 0) {
+    if (this.running < this.maxConcurrency && this.queue.length > 0) {
       const next = this.queue.shift();
       if (next) next.resolve();
     }
   }
 
+  // H2: Reject all queued items instead of resolving — resolving creates
+  // a stampede that bypasses the concurrency limit entirely.
   clearQueue() {
-    for (const item of this.queue) item.resolve();
+    const err = new Error("Queue cleared");
+    err.name = "QueueClearedError";
+    for (const item of this.queue) item.reject(err);
     this.queue = [];
   }
 }
@@ -148,7 +170,8 @@ export async function retryWithBackoff(fn, options = {}) {
 function _shouldRetry(err) {
   // zenRequest handles its own 429 retries — don't double-retry
   if (err?._retriesExhausted) return false;
-  if (err instanceof RateLimitError) return false;
+  // M12: RateLimitError with status 429 should not retry (already handled by upstream)
+  if (err instanceof RateLimitError && err.status === 429) return false;
   const status = err?.response?.status ?? err?.status ?? err?.statusCode;
   if (status === 429) return false;
   const msg = err?.message?.toLowerCase() || "";
@@ -212,6 +235,7 @@ export class ModelConcurrencyManager {
   releaseModel(modelName) {
     const isThinking = this._isThinkingModel(modelName);
     const queue = isThinking ? this.thinkingQueue : this.standardQueue;
+    if (queue.running <= 0) return; // underflow guard — prevents negative concurrency
     queue.release();
   }
 
@@ -284,9 +308,12 @@ export function truncateToolMessagesInPayload(payload, opts = {}) {
     const tail = tailChars > 0 ? original.slice(-tailChars) : "";
     const omitted = original.length - head.length - tail.length;
     const marker = `\n\n...[tool output truncated: ${omitted} chars omitted]...\n\n`;
-    msg.content = head + marker + tail;
+    const newContent = head + marker + tail;
+    // Create new object instead of mutating msg in-place
+    const idx = messages.indexOf(msg);
+    messages[idx] = { ...msg, content: newContent };
     truncatedMessages++;
-    finalTotalChars += msg.content.length;
+    finalTotalChars += newContent.length;
   }
 
   return { truncatedMessages, originalTotalChars, finalTotalChars };

@@ -16,10 +16,11 @@ import { t } from "./i18n.js";
 import { chatCompletion, isDeepSeekModel, isMiMoModel } from "./snet-handle.js";
 import { log } from "./logger.js";
 
-const KEEPALIVE_ENABLED = (Bun.env.SESSION_KEEPALIVE_ENABLED || "true") !== "false";
-const KEEPALIVE_INTERVAL_MS = Math.max(30000, parseInt(Bun.env.SESSION_KEEPALIVE_INTERVAL_MS || "120000", 10)); // 2分钟，最少30秒
-const KEEPALIVE_IDLE_TIMEOUT_MS = Math.max(KEEPALIVE_INTERVAL_MS * 2, parseInt(Bun.env.SESSION_KEEPALIVE_IDLE_TIMEOUT_MS || "600000", 10)); // 10分钟
-const KEEPALIVE_MAX_LIFETIME_MS = Math.max(3600000, parseInt(Bun.env.SESSION_KEEPALIVE_MAX_LIFETIME_MS || "86400000", 10)); // 24小时，最少1小时
+const _env = (k, d) => (typeof Bun !== "undefined" ? Bun.env[k] : typeof process !== "undefined" ? process.env[k] : undefined) ?? d;
+const KEEPALIVE_ENABLED = (_env("SESSION_KEEPALIVE_ENABLED", "true")) !== "false";
+const KEEPALIVE_INTERVAL_MS = Math.max(30000, parseInt(_env("SESSION_KEEPALIVE_INTERVAL_MS", "120000"), 10));
+const KEEPALIVE_IDLE_TIMEOUT_MS = Math.max(KEEPALIVE_INTERVAL_MS * 2, parseInt(_env("SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", "600000"), 10));
+const KEEPALIVE_MAX_LIFETIME_MS = Math.max(3600000, parseInt(_env("SESSION_KEEPALIVE_MAX_LIFETIME_MS", "86400000"), 10));
 const _GR = "\x1b[90m"; // dim gray for keepalive log lines
 const _GRST = "\x1b[0m";
 

@@ -34,6 +34,13 @@ move /y .dist\snet.exe .dist\snet >nul
 if exist .env if not exist .dist\.env copy /y .env .dist\ >nul
 if exist .version copy /y .version .dist\ >nul
 
+REM ── Step 1b: Copy skills ──
+if exist src\skills\ (
+    echo [INFO] Copying skills...
+    if exist .dist\src\skills rmdir /s /q .dist\src\skills 2>nul
+    xcopy /e /i /q /y src\skills .dist\src\skills >nul
+)
+
 REM ── Step 2: Create start.cmd (simple one-shot launcher) ──
 echo [INFO] Creating start.cmd...
 (

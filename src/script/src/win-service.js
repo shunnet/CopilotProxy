@@ -95,7 +95,8 @@ export async function handleServiceCommand(argv) {
 }
 
 let _keepAlive = [];
-function _keep(buf) { _keepAlive.push(buf); return buf; }
+const _KEEPALIVE_MAX = 1000; // prevent OOM in long-running services
+function _keep(buf) { if (_keepAlive.length < _KEEPALIVE_MAX) { _keepAlive.push(buf); } return buf; }
 
 function _toWideBuf(str) {
   const n = str.length;
@@ -211,6 +212,7 @@ export async function runAsService({ onStart, onStop }) {
   if (dispatched === 0) {
     process.stderr.write(t("winSvcNotScm") + "\n");
     await onStart();
+    return;
   }
 
   if (_stopEvent) kernel32.symbols.CloseHandle(_stopEvent);
