@@ -31,12 +31,6 @@ public class EnvConfigModel
     public string ServerHost { get; set; } = "127.0.0.1";
 
     /// <summary>
-    /// 技能目录路径 — 自定义技能存放位置
-    /// </summary>
-    [Description("技能目录路径（默认留空为自动检测）")]
-    public string SkillsDir { get; set; } = "";
-
-    /// <summary>
     /// 界面语言：zh（中文）/ en（英文），默认 zh
     /// </summary>
     [Description("界面语言（zh/en，默认 zh）")]
@@ -104,7 +98,7 @@ public class EnvConfigModel
     /// 不同级别对应不同的压缩策略和 Token 节省率
     /// </summary>
     [Description("提示词压缩级别：off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard（默认 off）")]
-    public string CompressionLevel { get; set; } = "off";
+    public string CompressionLevel { get; set; } = "standard";
 
     #endregion
 
@@ -115,14 +109,14 @@ public class EnvConfigModel
     /// </summary>
     [Description("推理模型最大并发数（保持较低以避免上游 429）")]
     [Range(1, 100, ErrorMessage = "并发数必须在 1-100 之间")]
-    public int ConcurrencyThinking { get; set; } = 1;
+    public int ConcurrencyThinking { get; set; } = 5;
 
     /// <summary>
     /// 标准模型的最大并发请求数
     /// </summary>
     [Description("标准模型最大并发数")]
     [Range(1, 100, ErrorMessage = "并发数必须在 1-100 之间")]
-    public int ConcurrencyStandard { get; set; } = 3;
+    public int ConcurrencyStandard { get; set; } = 15;
 
     /// <summary>
     /// 遇到 429（频率限制）错误时的最大重试次数，设为 0 禁用重试
@@ -138,18 +132,18 @@ public class EnvConfigModel
     public bool TruncateToolOutput { get; set; } = true;
 
     /// <summary>
-    /// 推理模型（Thinking）请求超时（毫秒），默认 120000（2 分钟）
+    /// 推理模型（Thinking）请求超时（毫秒），默认 300000（5 分钟）
     /// </summary>
-    [Description("推理模型超时，毫秒（默认 120000）")]
+    [Description("推理模型超时，毫秒（默认 300000）")]
     [Range(10000, int.MaxValue, ErrorMessage = "超时必须 >= 10000ms")]
-    public int ThinkingTimeoutMs { get; set; } = 120000;
+    public int ThinkingTimeoutMs { get; set; } = 300000;
 
     /// <summary>
-    /// 标准模型请求超时（毫秒），默认 120000（2 分钟）
+    /// 标准模型请求超时（毫秒），默认 300000（5 分钟）
     /// </summary>
-    [Description("标准模型超时，毫秒（默认 120000）")]
+    [Description("标准模型超时，毫秒（默认 300000）")]
     [Range(10000, int.MaxValue, ErrorMessage = "超时必须 >= 10000ms")]
-    public int RequestTimeoutMs { get; set; } = 120000;
+    public int RequestTimeoutMs { get; set; } = 300000;
 
     /// <summary>
     /// 工具输出最大字符数（超过则截断），默认 12000

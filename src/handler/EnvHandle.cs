@@ -63,10 +63,8 @@ public static class EnvHandle
         model.SessionKeepaliveIntervalMs = GetInt(envMap, "SESSION_KEEPALIVE_INTERVAL_MS", 120000);
         model.SessionKeepaliveIdleTimeoutMs = GetInt(envMap, "SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", 600000);
         model.SessionKeepaliveMaxLifetimeMs = GetInt(envMap, "SESSION_KEEPALIVE_MAX_LIFETIME_MS", 86400000);
-        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", null);
         model.ServerHost = GetString(envMap, "SERVER_HOST", "127.0.0.1");
         model.MaxToolOutputChars = GetInt(envMap, "MAX_TOOL_OUTPUT_CHARS", 12000);
-        model.SkillsDir = GetString(envMap, "SKILLS_DIR", "");
         model.SnetLanguage = GetString(envMap, "SNET_LANGUAGE", "zh");
         model.PassthroughBaseUrl = GetString(envMap, "PASSTHROUGH_BASE_URL", "");
         model.TerminalFallbackEnabled = GetBool(envMap, "TERMINAL_FALLBACK_ENABLED", false);
@@ -150,9 +148,6 @@ public static class EnvHandle
             $"SESSION_KEEPALIVE_INTERVAL_MS={model.SessionKeepaliveIntervalMs}",
             $"SESSION_KEEPALIVE_IDLE_TIMEOUT_MS={model.SessionKeepaliveIdleTimeoutMs}",
             $"SESSION_KEEPALIVE_MAX_LIFETIME_MS={model.SessionKeepaliveMaxLifetimeMs}",
-            "",
-            "# --- Skills ---",
-            !string.IsNullOrEmpty(model.SkillsDir) ? $"SKILLS_DIR={model.SkillsDir}" : "# SKILLS_DIR=",
             "",
             "# --- Language (zh / en) ---",
             $"SNET_LANGUAGE={model.SnetLanguage}",

@@ -124,18 +124,17 @@ function _agentCore() {
 }
 
 // ── Tool usage rules (token-optimized from Copilot/Cursor patterns) ──
-// ~100 tokens
 function _toolUsageCore() {
   return `TOOL RULES:
+- FILE READING ORDER: ① First, read the ACTUAL source code files that contain the logic you need to review or change (the main .cs/.py/.js/.ts etc files, not config files). Use startLine:1 endLine:500. ② Only read project files (.csproj, package.json, pyproject.toml, etc.) if you need build settings or dependencies. ③ Skip auto-generated files (.Designer.cs, *.g.cs, __pycache__, node_modules, etc.) unless the task explicitly involves them.
+- READ FILES ONCE and don't re-read what you already have in context.
 - Use tools instead of printing codeblocks or terminal commands
 - Call independent tools in parallel when possible
 - Don't say tool names to the user — describe actions naturally
 - After editing a file, validate the change (check for errors)
 - If info is discoverable via tools, prefer that over asking the user
-- When reading a file, read the FULL file (large line range) — don't read line-by-line
-- Search first (grep/semantic) to locate code, then read the relevant file in one call
-- You have full context of all prior tool results — don't re-read files you already read
-- Read only the files you need — don't browse the entire project speculatively`;
+- Search first (grep/semantic) to locate code, then read the FULL file in one call
+- You have full context of all prior tool results — don't re-read files you already read`;
 }
 
 // ── Edit file rules (from Copilot editFileInstructions) ──
@@ -173,7 +172,30 @@ export function compactToolInstructions(clientTag) {
     parts.push(_sqlRules());
   }
   parts.push("Call task_complete() when the task is fully done.");
-  parts.push("PLAN TOOL: When you start a task, call plan() with planMarkdown containing a numbered step list (1. 2. 3.). Each step must be concrete: name the file, describe the action, state the expected result. Do NOT leave planMarkdown empty.");
+  parts.push(`PLAN TOOL — REQUIRED for any multi-step task.
+
+When you call plan(), planMarkdown MUST be filled with the following template. Copy the structure and fill in every section:
+
+---
+# 🎯 [Task Title — a short, specific name for this plan]
+**概述**: [One sentence summarizing the goal]
+
+**进度**: 0% [░░░░░░░░░░]
+
+## 📝 计划步骤
+1. **[Step name]** — Read/Writes: _specific file paths_ — _What to check after_
+2. **[Step name]** — Read/Writes: _specific file paths_ — _What to check after_
+3. ...
+
+## ⚠️ 注意事项
+- [Risk or dependency]
+
+## ✅ 验证标准
+- [ ] [How to confirm the task is done]
+---
+
+Each step MUST name real file paths. Use \`manage_todo_list()\` to mark steps complete.`);
+  parts.push(`PROGRESS: After each step, call manage_todo_list() with the updated todoList. Show progress like [2/5] done in your text response.`);
   return parts.join("\n\n");
 }
 
@@ -954,4 +976,50 @@ export function estimatedSavings(level) {
     case "delta": return 80;
     default: return 0;
   }
+}
+
+// ── Skill content compression ──
+
+/**
+ * Compress a SKILL.md body for injection into the system prompt.
+ * Tuned to preserve code examples (the most valuable part) while
+ * aggressively shortening verbose prose.
+ *
+ * @param {string} content — full SKILL.md body (after YAML frontmatter)
+ * @returns {string} compressed content
+ */
+export function compressSkillContent(content) {
+  if (!content || typeof content !== "string") return content || "";
+
+  let c = content;
+
+  // 1. Strip markdown/HTML comments
+  c = c.replace(/<!--[\s\S]*?-->/g, "");
+
+  // 2. Collapse multiple blank lines
+  c = c.replace(/\n{3,}/g, "\n\n");
+
+  // 3. Truncate long code blocks: keep header + first 30 content lines + footer
+  c = c.replace(/```[\s\S]*?```/g, (match) => {
+    const lines = match.split("\n");
+    if (lines.length > 32) {
+      const fence = lines[0]; // opening ```lang
+      const closeFence = lines[lines.length - 1]; // closing ```
+      return fence + "\n" +
+        lines.slice(1, 31).join("\n") + "\n" +
+        "// ... (" + (lines.length - 32) + " more lines) ...\n" +
+        closeFence;
+    }
+    return match;
+  });
+
+  // 4. Strip redundant section headers that don't add value
+  c = c.replace(/^#{1,3}\s+(Overview|Introduction|Prerequisites|Getting Started|Background)\s*$/gim, "");
+
+  // 5. If still very long, apply caveman-level compression
+  if (c.length > 3000) {
+    c = compressContent(c, "caveman");
+  }
+
+  return c;
 }

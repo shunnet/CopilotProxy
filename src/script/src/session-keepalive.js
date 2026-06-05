@@ -18,14 +18,17 @@ import { log } from "./logger.js";
 
 const _env = (k, d) => (typeof Bun !== "undefined" ? Bun.env[k] : typeof process !== "undefined" ? process.env[k] : undefined) ?? d;
 const KEEPALIVE_ENABLED = (_env("SESSION_KEEPALIVE_ENABLED", "true")) !== "false";
-const KEEPALIVE_INTERVAL_MS = Math.max(30000, parseInt(_env("SESSION_KEEPALIVE_INTERVAL_MS", "120000"), 10));
-const KEEPALIVE_IDLE_TIMEOUT_MS = Math.max(KEEPALIVE_INTERVAL_MS * 2, parseInt(_env("SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", "600000"), 10));
+const KEEPALIVE_INTERVAL_MS = Math.max(30000, parseInt(_env("SESSION_KEEPALIVE_INTERVAL_MS", "60000"), 10));
+const KEEPALIVE_IDLE_TIMEOUT_MS = Math.max(KEEPALIVE_INTERVAL_MS * 2, parseInt(_env("SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", "300000"), 10));
 const KEEPALIVE_MAX_LIFETIME_MS = Math.max(3600000, parseInt(_env("SESSION_KEEPALIVE_MAX_LIFETIME_MS", "86400000"), 10));
-const _GR = "\x1b[90m"; // dim gray for keepalive log lines
-const _GRST = "\x1b[0m";
+const _GR = ""; // keepalive log prefix
+const _GRST = "";
 
 const _sessions = new Map();
 let _totalPings = 0;
+if (KEEPALIVE_ENABLED) {
+  log("[keepalive] ENABLED — interval:" + Math.round(KEEPALIVE_INTERVAL_MS/1000) + "s idle_timeout:" + Math.round(KEEPALIVE_IDLE_TIMEOUT_MS/1000) + "s max_lifetime:" + Math.round(KEEPALIVE_MAX_LIFETIME_MS/3600000) + "h");
+}
 
 function getProvider(model) {
   if (isDeepSeekModel(model)) return "deepseek";
@@ -103,7 +106,10 @@ async function doKeepalive(sessionId) {
   }
 
   if (_sessions.has(sessionId)) {
-    scheduleKeepalive(sessionId);
+    if (!existing) {
+    log("[keepalive] tracking session " + sessionId.slice(0,8) + " (" + provider + "/" + model.split(":")[0] + ")");
+  }
+  scheduleKeepalive(sessionId);
   }
 }
 

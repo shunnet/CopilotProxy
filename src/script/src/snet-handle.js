@@ -330,41 +330,37 @@ async function fetchModels() {
   let dsCount = 0;
   if (isDeepSeekAvailable()) {
     const dsModels = await getDeepSeekModels();
-    if (dsModels.length) {
-      models.push(sepModel(SEP_DEEPSEEK, "== DeepSeek =="));
-      for (const m of dsModels) {
-        models.push({
-          name: m.name, model: `${m.id}:latest`, modified_at: now, size: 0, digest: m.id,
-          maxParams: m.context_length || 0,
-          details: { parent_model: "", format: "gguf", family: m.family, families: [m.family], parameter_size: `${(m.context_length / 1000).toFixed(0)}K` || "", quantization_level: "F16", tools: true, vision: false, supports_tools: true, supports_function_calling: true, supports_vision: false },
-          capabilities: { tools: true, vision: false, function_calling: true, tool_calling: true },
-          supports_tools: true, supports_function_calling: true,
-        });
-        _modelMap[m.id.toLowerCase()] = { id: m.id, name: m.name, tools: true, vision: false, _ds: true };
-        _nameToId[m.name.toLowerCase()] = m.id;
-        dsCount++;
-      }
+    for (const m of dsModels) {
+      models.push({
+        name: m.name, model: `${m.id}:latest`, modified_at: now, size: 0, digest: m.id,
+        maxParams: m.context_length || 0,
+        details: { parent_model: "", format: "gguf", family: m.family, families: [m.family], parameter_size: `${(m.context_length / 1000).toFixed(0)}K` || "", quantization_level: "F16", tools: true, vision: false, supports_tools: true, supports_function_calling: true, supports_vision: false },
+        capabilities: { tools: true, vision: false, function_calling: true, tool_calling: true },
+        supports_tools: true, supports_function_calling: true,
+      });
+      _modelMap[m.id.toLowerCase()] = { id: m.id, name: m.name, tools: true, vision: false, _ds: true };
+      _nameToId[m.name.toLowerCase()] = m.id;
+      dsCount++;
     }
+    if (dsCount) models.unshift(sepModel(SEP_DEEPSEEK, `DeepSeek (${dsCount})`));
   }
 
   let mimoCount = 0;
   if (isMiMoAvailable()) {
     const mimoModels = await getMiMoModels();
-    if (mimoModels.length) {
-      models.push(sepModel(SEP_MIMO, "== MiMo =="));
-      for (const m of mimoModels) {
-        models.push({
-          name: m.name, model: `${m.id}:latest`, modified_at: now, size: 0, digest: m.id,
-          maxParams: m.context_length || 0,
-          details: { parent_model: "", format: "gguf", family: m.family, families: [m.family], parameter_size: `${(m.context_length / 1000).toFixed(0)}K` || "", quantization_level: "F16", tools: true, vision: true, supports_tools: true, supports_function_calling: true, supports_vision: true },
-          capabilities: { tools: true, vision: true, function_calling: true, tool_calling: true },
-          supports_tools: true, supports_function_calling: true,
-        });
-        _modelMap[m.id.toLowerCase()] = { id: m.id, name: m.name, tools: true, vision: true, _mimo: true };
-        _nameToId[m.name.toLowerCase()] = m.id;
-        mimoCount++;
-      }
+    for (const m of mimoModels) {
+      models.push({
+        name: m.name, model: `${m.id}:latest`, modified_at: now, size: 0, digest: m.id,
+        maxParams: m.context_length || 0,
+        details: { parent_model: "", format: "gguf", family: m.family, families: [m.family], parameter_size: `${(m.context_length / 1000).toFixed(0)}K` || "", quantization_level: "F16", tools: true, vision: true, supports_tools: true, supports_function_calling: true, supports_vision: true },
+        capabilities: { tools: true, vision: true, function_calling: true, tool_calling: true },
+        supports_tools: true, supports_function_calling: true,
+      });
+      _modelMap[m.id.toLowerCase()] = { id: m.id, name: m.name, tools: true, vision: true, _mimo: true };
+      _nameToId[m.name.toLowerCase()] = m.id;
+      mimoCount++;
     }
+    if (mimoCount) models.splice(models.length - mimoCount, 0, sepModel(SEP_MIMO, `MiMo (${mimoCount})`));
   }
 
   _models = models;
@@ -453,7 +449,7 @@ export function resolveModelMetadata(modelId) {
   const allModels = { ...((_mdCache && _mdCache["opencode-go"]?.models) || {}), ...((_mdCache && _mdCache["opencode"]?.models) || {}) };
   const mdModel = allModels[clean];
   return {
-    context_length: (config.forceAllCapabilities ? 131072 : 0) || mdModel?.limit?.context || config.defaultContextLength,
+    context_length: mdModel?.limit?.context || (isDeepSeekModel(modelId) || isMiMoModel(modelId) ? 1048576 : config.defaultContextLength),
     capabilities: isMiMoModel(modelId) ? ["chat", "completion", "vision", "tools", "agent"] : ["chat", "completion", "tools", "agent"],
     family: mdModel?.name || inferFamily(clean),
     parameter_size: fmtParamSize(mdModel?.parameter_size || mdModel?.parameter_count || inferParameterSize(clean)) || "",
@@ -465,10 +461,6 @@ export function resolveModelMetadata(modelId) {
 // ── 模型请求默认值 ──
 
 export function getThinkingModes(modelId) {
-  if (!modelId) return [];
-  const id = (modelId || "").replace(/\s+/g, " ").toLowerCase().split(":")[0].trim();
-  if (isDeepSeekModel(id)) return ["LOW", "MEDIUM", "HIGH", "MAXIMUM"];
-  // TODO: MiMo v2.5-pro supports thinking but has no mode levels. See Audit Issue A.
   return [];
 }
 
@@ -892,7 +884,7 @@ export async function* chatCompletion(req) {
       delete body.thinking;
       body.max_tokens = Math.max(body.max_tokens || 4096, 2048);
       try {
-        const resp2 = await apiRequest("/chat/completions", body, { signal: AbortSignal.timeout?.(cfg.requestTimeoutMs || 120000) ?? undefined });
+        const resp2 = await apiRequest("/chat/completions", body, {});
         if (req.stream === false) {
           const data = await resp2.json();
           const choice = data.choices[0];

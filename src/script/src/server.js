@@ -42,7 +42,7 @@ import { stream } from "hono/streaming";
 import { config, getModels, initModels, resolveModel, resolveModelMetadata, isKnownModel, chatCompletion, APIError, isSeparator, isDeepSeekModel, isMiMoModel, SEP_DEEPSEEK, SEP_MIMO, refreshModels, bgFetchDone, fetchWithAgent, getThinkingModes, parseThinkingMode } from "./snet-handle.js";
 
 import { ModelConcurrencyManager, RateLimitError, truncateToolMessagesInPayload, checkRequestBodySize } from "./concurrency.js";
-import { compactIdentity, compactToolInstructions, compactOllamaToolInstructions, compactCodeCompletionPrompt, compressMessages, compressHistory } from "./token-optimizer.js";
+import { compactIdentity, compactToolInstructions, compactOllamaToolInstructions, compactCodeCompletionPrompt } from "./token-optimizer.js";
 import { trackSession, shutdown as keepaliveShutdown, stats as keepaliveStats } from "./session-keepalive.js";
 import { handleServiceCommand, runAsService } from "./win-service.js";
 import { log, error as logErr, debug, reqLog, enableDashboard, disableDashboard, onCommand, collapseBanner, expandBanner, redrawBanner, setBoxWidth } from "./logger.js";
@@ -56,7 +56,6 @@ import { createReasoningContext, _assistantNeedsReasoning, _crossReqReasoningCac
 import { _sessionRegistry, _workspaceSessions, _workspaceSummaries, _taskCompletedSessions, _recentlyCompleted, _rateLimitedSessions, _sessionCounter, _summarizeCompletedTask, setSessionCounter, sessionLog } from "./session-tracker.js";
 import { _simStream, _foldReasoningIntoContent, addReasoningAliases, reconstructToolCalls, createXMLAwareStreamAccumulator } from "./stream-handler.js";
 import { embedReasoning, extractReplayedReasoning } from "./reasoning-replay.js";
-import { loadSkills, buildSkillSystemPrompt, refreshSkills, matchSkills, buildSkillActivationPrompt } from "./skill-loader.js";
 
 // ── Service command routing (early exit for install/uninstall) ──
 {
@@ -121,12 +120,12 @@ const err = (msg) => logErr(msg);
 # COMPRESSION_LEVEL=off
 
 # --- Concurrency & Rate Limiting ---
-# CONCURRENCY_THINKING=1
-# CONCURRENCY_STANDARD=3
+# CONCURRENCY_THINKING=5
+# CONCURRENCY_STANDARD=15
 # RETRY_MAX=3
 # RETRY_BASE_DELAY_MS=100
-# THINKING_TIMEOUT_MS=120000
-# REQUEST_TIMEOUT_MS=120000
+# THINKING_TIMEOUT_MS=300000
+# REQUEST_TIMEOUT_MS=300000
 # MAX_REQUEST_BODY_BYTES=67108864
 
 # --- Tool Output Truncation ---
@@ -149,9 +148,6 @@ const err = (msg) => logErr(msg);
 # SESSION_KEEPALIVE_INTERVAL_MS=120000
 # SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=600000
 # SESSION_KEEPALIVE_MAX_LIFETIME_MS=86400000
-
-# --- Skills ---
-# SKILLS_DIR=              # custom path to skills directory
 
 # --- Language (zh / en) ---
 # SNET_LANGUAGE=zh
@@ -323,9 +319,7 @@ function processThinkTags(text) {
 
 const _displayReasoning = (process.env.DISPLAY_REASONING || "false").toLowerCase() === "true";
 let _tool400Streak = 0;
-let _skillsLoaded = 0;
-let _skillNames = [];
-let _skillsCache = []; // full skill objects for auto-matching
+// skills removed
 const _skillsMatched = new Map(); // sessionKey → [skillNames], avoids re-matching per request
 const _collapsibleReasoning = (process.env.COLLAPSIBLE_REASONING || "true").toLowerCase() !== "false";
 const _THINKING_BLOCK_START = _collapsibleReasoning ? "<details>\n<summary>snet Thinking</summary>\n\n" : "<!-- snet-thinking -->\n";
@@ -1023,7 +1017,7 @@ app.post("/v1/chat/completions", async c => {
     }
   }
   // Flood guard: if think-fallback streak persists across too many requests, 503
-  if (reasoningCtx.sessionEntry.thinkFallbackStreak >= 2) {
+  if (false) {
     reasoningCtx.sessionEntry.stopCount = (reasoningCtx.sessionEntry.stopCount || 0) + 1;
     if (reasoningCtx.sessionEntry.stopCount >= 5) {
       reasoningCtx.seslog(`\x1b[31m[think-fallback] flood ${reasoningCtx.sessionEntry.stopCount} stops — returning 503\x1b[0m`);
@@ -1198,6 +1192,7 @@ app.post("/v1/chat/completions", async c => {
           }
         }
         if (toolLoopBroken) continue;
+        try { const p2 = userMsgs[userMsgs.length-1]; if(p2&&p2.role==="assistant"&&p2.tool_calls){ const mt = p2.tool_calls.find(t=>t.id===m.tool_call_id); if(mt&&mt.function&&mt.function.name&&mt.function.name.includes("read")&&tc.length>10&&!tc.startsWith("[trunc")){ tc += " [Read more: use startLine+endLine to continue.]"; } } } catch(e){}
         if (/^(Error|Failed|Invalid|Timeout|\[Error\]|\[Fail\]|command not found|is not recognized|no such file)/i.test(tc.trim())) {
           toolFailStreak++;
           if (toolFailStreak > 3) { toolLoopBroken = true; log("  breaking tool retry loop (>3 consecutive errors)"); continue; }
@@ -1326,7 +1321,7 @@ app.post("/v1/chat/completions", async c => {
       }
     }
     const totalContinueCount = bareContinueCount + replacedContinueCount;
-    if (totalContinueCount >= 3 && !lastAssistantHasTools) {
+    if (false) {
       reasoningCtx.seslog(`\x1b[33m[LOOP-BREAK] autopilot stall — ${totalContinueCount} continues with no tool output — cutting session\x1b[0m`);
       filterNags = true;
     }
@@ -1335,7 +1330,7 @@ app.post("/v1/chat/completions", async c => {
     systemMsg = compactIdentity(goModel, thinkingTag) + (systemMsg ? "\n\n" : "") + systemMsg;
 
     // Inject available skills reference (compact name list for model awareness)
-    if (_skillNames.length > 0) {
+    if (false) {
       systemMsg += "\n\n## Available Skills\n";
       systemMsg += "You have access to the following skill references. When a task matches a skill's domain, you can apply its patterns and best practices:\n";
       systemMsg += _skillNames.join(", ") + "\n";
@@ -1344,7 +1339,7 @@ app.post("/v1/chat/completions", async c => {
 
     // Auto-match skills based on user's message content
     // Cache per session to avoid re-matching on every tool call round
-    if (_skillsCache.length > 0 && messages.length > 0) {
+    if (false) {
       const sessionKey = reasoningCtx.conv || reasoningCtx.sessionEntry?.id;
       if (sessionKey && !_skillsMatched.has(sessionKey)) {
         const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
@@ -1394,7 +1389,7 @@ app.post("/v1/chat/completions", async c => {
     // and VS is nagging about task completion, short-circuit with task_complete
     // instead of forwarding the nag to the LLM. For real tasks with tools,
     // the last assistant would have tool_calls and this won't fire.
-    if (vsTaskCompleteNags > 0) {
+    if (false) {
       const hasToolActivity = messages.some(m =>
         m.role === "assistant" && (
           m.tool_calls?.length ||
@@ -1514,56 +1509,19 @@ app.post("/v1/chat/completions", async c => {
     // Vizards and other OpenAI-compatible proxies pass full uncompressed history.
     let deltaMessages = validatedMessages;
 
-    // DeepSeek/MiMo 自动思考强度（不再依赖模型名标签 L/M/H/MX）
-    let effectiveThinkingTag = null;
-    if (isDeepSeekModel(goModel) || isMiMoModel(goModel)) {
-      const lastUser = userMsgs.filter(m => m.role === "user").pop();
-      const userText = typeof lastUser?.content === "string" ? lastUser.content : "";
-      const toolRounds = deltaMessages.filter(m => m.role === "assistant" && m.tool_calls?.length).length;
+    // DeepSeek: only low/medium/high valid. MAXIMUM→high. MiMo: toggle only.
+    const effectiveThinkingTag = /v4-pro|v4\.5|mimo-v2\.5-pro/i.test(goModel) ? "MAXIMUM" : "LOW";
 
-      if (toolRounds > 5) {
-        // 超过 5 轮工具调用 → 关闭思考，提高稳定性
-        effectiveThinkingTag = null;
-      } else if (toolRounds > 0) {
-        // 已有工具调用 → 继续保持中等思考
-        effectiveThinkingTag = "MEDIUM";
-      } else if (userText.length < 20 || /^(hi|hello|hey|你好|谢谢|ok|yes|no)$/i.test(userText.trim())) {
-        // 简单闲聊 → 不思考
-        effectiveThinkingTag = null;
-      } else if (/\b(debug|bug|error|fix|refactor|optimize|architecture|design|explain|analyze|review|漏洞|修复|重构|优化|架构|分析|审查)\b/i.test(userText)) {
-        // 复杂任务 → 高思考
-        effectiveThinkingTag = "HIGH";
-      } else {
-        // 默认 → 中等思考
-        effectiveThinkingTag = "MEDIUM";
-      }
-
-      // 为 DeepSeek/MiMo 注入 reasoning_content（文档要求：工具调用轮次必须回传，否则 400 错误）
-      if ((isDeepSeekModel(goModel) || isMiMoModel(goModel)) && effectiveThinkingTag) {
-        deltaMessages = deltaMessages.map(m => {
-          if (m.role === "assistant" && m.tool_calls?.length && !m.reasoning_content) {
-            return { ...m, reasoning_content: replayedReasoning || reasoningCtx.get(m, goModel) || "" };
-          }
-          return m;
-        });
-      }
-    }
-
-    // Apply prompt compression
-    // Compression DISABLED for all clients — stripping text content (even "filler")
-    // makes the model lose context and re-read files. Send full uncompressed messages.
-    // Vizards and other proxies send raw history without compression.
-    const compressedMessages = deltaMessages;
-
-    // 确保压缩后 assistant 消息的 reasoning_content 不丢失（DeepSeek + MiMo）
-    if (effectiveThinkingTag && (isDeepSeekModel(goModel) || isMiMoModel(goModel))) {
-      for (const cm of compressedMessages) {
-        if (cm.role === "assistant" && cm.tool_calls?.length && !cm.reasoning_content) {
-          const rc = reasoningCtx.get(cm, goModel);
-          cm.reasoning_content = rc || "";
+    if ((isDeepSeekModel(goModel) || isMiMoModel(goModel)) && effectiveThinkingTag) {
+      deltaMessages = deltaMessages.map(m => {
+        if (m.role === "assistant" && m.tool_calls?.length && !m.reasoning_content) {
+          return { ...m, reasoning_content: replayedReasoning || reasoningCtx.get(m, goModel) || "" };
         }
-      }
+        return m;
+      });
     }
+
+    const compressedMessages = deltaMessages;
 
     let upstreamTools = (vsTools && vsTools.length > 0) ? vsTools : undefined;
     const ollamaReq = { model: goModel, messages: compressedMessages, stream: streamMode, tools: upstreamTools, clientTag, sessionId: reasoningCtx.sessionId, thinkingTag: effectiveThinkingTag };
@@ -2307,7 +2265,7 @@ app.post("/api/chat", async c => {
       }
 
       // Auto-match skills in /api/chat path (same logic as v1/chat/completions)
-      if (_skillsCache.length > 0) {
+      if (false) {
         const sessionKey = c.req.header("x-session-id") || body.model;
         if (sessionKey && !_skillsMatched.has(sessionKey)) {
           const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
@@ -2808,16 +2766,6 @@ const hasMiMo = models.some(m => isMiMoModel(m.model));
 if (hasDS) log(`\x1b[32m${t("modelLoaded")}\x1b[0m`);
 if (hasMiMo) log(`\x1b[35m${t("mimoLoaded")}\x1b[0m`);
 
-// Load skills synchronously so banner includes the count
-try {
-  const skills = await loadSkills();
-  _skillsLoaded = skills.length;
-  _skillNames = skills.map(s => s.name);
-  _skillsCache = skills;
-  log(`\x1b[33m[skills] ${_skillsLoaded} skills loaded\x1b[0m`);
-} catch (e) {
-  log(`\x1b[31m[skills] load failed: ${e.message}\x1b[0m`);
-}
 
 let _buildDate = "";
 try {
@@ -2853,7 +2801,6 @@ P(line(S + portLabel + "  |  built " + C + _buildDate + R + S + "  |  models.dev
 	const _bannerCollapsed = [..._bannerLines];
 	if (hasDS) _bannerCollapsed.push(line(S + C + "▶ " + R + S + "DeepSeek (" + dsModels.length + ")" + R));
 	if (hasMiMo) _bannerCollapsed.push(line(S + C + "▶ " + R + S + "MiMo (" + mimoModels.length + ")" + R));
-	if (_skillsLoaded > 0) _bannerCollapsed.push(line(S + C + "▶ " + R + S + "Skills (" + _skillsLoaded + ")" + R));
 	_bannerCollapsed.push(W + "└" + hr + W + "┘" + R);
 
 	function printTable(list) {
@@ -2905,10 +2852,6 @@ P(line(S + portLabel + "  |  built " + C + _buildDate + R + S + "  |  models.dev
 	  printSimple(mimoModels, "MiMo");
 	}
 
-	if (_skillsLoaded > 0) {
-	  P(line(S + "▶ " + "Skills (" + _skillsLoaded + ")".padEnd(54) + R));
-	}
-
 P(W + "\u2514" + hr + W + "\u2518" + R);                                            // └───┘
 
 // Print banner once (accumulated above) — avoids double-print from P() + _redraw()
@@ -2916,7 +2859,6 @@ const _isTTY = !!(process.stdout.isTTY ?? process.stdin.isTTY);
 if (_isPlainMode) {
   log(`[Shunnet.top] Copilot Proxy  |  port: ${port}  |  models.dev`);
   if (hasDS) log(`DeepSeek (${dsModels.length}): ${dsModels.map(m => m.name).join(", ")}`);
-  if (_skillsLoaded > 0) log(`[33m[skills] ${_skillsLoaded} loaded[0m`);
   if (hasMiMo) log(`MiMo (${mimoModels.length}): ${mimoModels.map(m => m.name).join(", ")}`);
 } else if (_isTTY) {
   // Print banner once, then enable dashboard for live updates

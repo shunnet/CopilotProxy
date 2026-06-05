@@ -13,12 +13,12 @@ const log = (msg) => modLog(`[queue] ${msg}`);
 // ── Config helpers ──
 function getConfig() {
   return {
-    thinkingConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_THINKING || "1", 10)),
-    standardConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_STANDARD || "3", 10)),
+    thinkingConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_THINKING || "5", 10)),
+    standardConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_STANDARD || "15", 10)),
     maxRetries: Math.max(0, parseInt(Bun.env.RETRY_MAX || "3", 10)),
     retryBaseDelayMs: Math.max(50, parseInt(Bun.env.RETRY_BASE_DELAY_MS || "100", 10)),
-    thinkingTimeoutMs: Math.max(10000, parseInt(Bun.env.THINKING_TIMEOUT_MS || "120000", 10)),
-    requestTimeoutMs: Math.max(10000, parseInt(Bun.env.REQUEST_TIMEOUT_MS || "120000", 10)),
+    thinkingTimeoutMs: Math.max(10000, parseInt(Bun.env.THINKING_TIMEOUT_MS || "300000", 10)),
+    requestTimeoutMs: Math.max(10000, parseInt(Bun.env.REQUEST_TIMEOUT_MS || "300000", 10)),
     maxRequestBodyBytes: Math.max(262144, parseInt(Bun.env.MAX_REQUEST_BODY_BYTES || "67108864", 10)),
     truncateToolOutput: Bun.env.TRUNCATE_TOOL_OUTPUT !== "false",
     maxToolOutputChars: Math.max(1000, parseInt(Bun.env.MAX_TOOL_OUTPUT_CHARS || "12000", 10)),

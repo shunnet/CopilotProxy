@@ -38,7 +38,12 @@ export async function getDeepSeekModels() {
       signal: controller.signal,
     });
     clearTimeout(timer);
-    if (!resp.ok) { _cachedModels = []; return []; }
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      logErr(`[deepseek] /models returned ${resp.status}: ${body.slice(0, 200)}`);
+      _cachedModels = [];
+      return [];
+    }
     const json = await resp.json();
     _cachedModels = (json.data || []).map(m => {
       const prefixed = `ds/${m.id}`;

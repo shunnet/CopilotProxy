@@ -38,10 +38,10 @@ GitHub Copilot 默认仅支持 OpenAI / Anthropic 等海外模型。对于国内
 <tr><td>🌍 <b>中英文国际化</b></td><td>WPF 与脚本服务双向语言同步，默认中文</td></tr>
 <tr><td>🪟 <b>单实例 + 托盘</b></td><td>Mutex + NamedPipe 确保唯一实例，关闭到托盘，新启动唤醒已有窗口</td></tr>
 <tr><td>🔄 <b>Ollama 协议兼容</b></td><td>模拟 Ollama API，VS 2026 / VS Code 原生接入</td></tr>
-<tr><td>🧠 <b>推理模式</b></td><td>支持 LOW / MEDIUM / HIGH / MAXIMUM 四档思考强度</td></tr>
+<tr><td>🧠 <b>自动推理</b></td><td>Pro 模型使用最大推理强度（更精准、较慢），Flash / 非 Pro 使用最低推理（响应最快）</td></tr>
 <tr><td>📦 <b>提示词压缩</b></td><td>9 级可选（off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard），默认关闭</td></tr>
-<tr><td>💬 <b>会话保活</b></td><td>自动维持 KV Cache，降低 API 费用</td></tr>
-<tr><td>📚 <b>技能系统</b></td><td>317 个编码技能（来自 ECC + superpowers + dotnet/skills），自动匹配对话上下文注入相关模式</td></tr>
+<tr><td>💬 <b>会话保活</b></td><td>自动维持 KV Cache，降低 API 费用，日志可见</td></tr>
+<tr><td>⚡ <b>高并发</b></td><td>推理模型 5 并发、标准模型 15 并发，大幅提升响应速度</td></tr>
 <tr><td>📊 <b>Token 用量</b></td><td>每轮对话实时输出 [token] prompt/completion/total 日志</td></tr>
 <tr><td>🌐 <b>透传代理</b></td><td>未匹配路由可转发到自定义上游 API（含 SSRF 防护 + 超时控制）</td></tr>
 <tr><td>🔧 <b>工具调用</b></td><td>完整的 Function Calling 支持，Schema 自动校验补全，智能 JSON 修复</td></tr>
@@ -106,18 +106,17 @@ npm run node       # Node.js 备选
 
 ### DeepSeek
 
-| 模型 | 上下文 | 工具调用 | 推理模式 |
-|------|---------|---------|----------|
-| 🔮 **DeepSeek V4 Pro** | 1M | ✅ | LOW · MEDIUM · HIGH · MAXIMUM |
-| ⚡ **DeepSeek V4 Flash** | 1M | ✅ | LOW · MEDIUM · HIGH · MAXIMUM |
+| 模型 | 上下文 | 工具调用 | 推理 |
+|------|---------|---------|------|
+| 🔮 **DeepSeek V4 Pro** | 1M | ✅ | 🧠 MAXIMUM（精准，较慢） |
+| ⚡ **DeepSeek V4 Flash** | 1M | ✅ | ⚡ LOW（响应最快） |
 
 ### 小米 MiMo
 
-| 模型 | 上下文 | 工具调用 | 视觉 |
-|------|---------|---------|------|
-| 🎯 **MiMo V2.5** | 1M | ✅ | ✅ |
-| 🎯 **MiMo V2.5 Pro** | 1M | ✅ | ✅ |
-| 🎤 **MiMo V2.5 TTS** | 262K | ✅ | ✅ |
+| 模型 | 上下文 | 工具调用 | 视觉 | 推理 |
+|------|---------|---------|------|------|
+| 🎯 **MiMo V2.5** | 1M | ✅ | ✅ | ⚡ LOW（响应最快） |
+| 🎯 **MiMo V2.5 Pro** | 1M | ✅ | ✅ | 🧠 MAXIMUM（精准，较慢） |
 
 ## ⚙️ 配置参数
 
@@ -145,11 +144,11 @@ npm run node       # Node.js 备选
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `COMPRESSION_LEVEL` | `off` | 压缩级别（off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard） |
-| `CONCURRENCY_THINKING` | `1` | 推理模型最大并发 |
-| `CONCURRENCY_STANDARD` | `3` | 标准模型最大并发 |
+| `CONCURRENCY_THINKING` | `5` | 推理模型最大并发 |
+| `CONCURRENCY_STANDARD` | `15` | 标准模型最大并发 |
 | `RETRY_MAX` | `3` | 429 错误重试次数 |
-| `THINKING_TIMEOUT_MS` | `120000` | 推理模型超时（毫秒） |
-| `REQUEST_TIMEOUT_MS` | `120000` | 请求超时（毫秒） |
+| `THINKING_TIMEOUT_MS` | `300000` | 推理模型超时（毫秒） |
+| `REQUEST_TIMEOUT_MS` | `300000` | 请求超时（毫秒） |
 | `TRUNCATE_TOOL_OUTPUT` | `true` | 工具输出截断 |
 | `MAX_TOOL_OUTPUT_CHARS` | `12000` | 工具输出最大字符数 |
 
@@ -169,11 +168,10 @@ npm run node       # Node.js 备选
 | `SESSION_KEEPALIVE_IDLE_TIMEOUT_MS` | `600000` | 保活空闲超时（毫秒） |
 | `SESSION_KEEPALIVE_MAX_LIFETIME_MS` | `86400000` | 保活最大生命周期（毫秒） |
 
-### 技能与语言
+### 语言
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `SKILLS_DIR` | 留空 | 自定义技能目录（留空 = 自动检测） |
 | `SNET_LANGUAGE` | `zh` | 界面语言（zh / en） |
 
 ### 透传与安全
@@ -188,7 +186,7 @@ npm run node       # Node.js 备选
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/tags` | GET | Ollama 模型列表（含推理模式变体） |
-| `/v1/chat/completions` | POST | 聊天补全（流式、工具调用、技能匹配） |
+| `/v1/chat/completions` | POST | 聊天补全（流式、工具调用、推理优化） |
 | `/api/chat` | POST | Ollama /api/chat 兼容（流式、工具调用） |
 | `/api/generate` | POST | Ollama /api/generate 兼容 |
 | `/v1/models` | GET | OpenAI 格式模型列表 |
@@ -231,7 +229,7 @@ npm run node       # Node.js 备选
 │  ┌───────────────────────────┐  │
 │  │  Ollama 兼容 API (Hono)    │  │
 │  ├───────────────────────────┤  │
-│  │  技能匹配 · 提示词压缩        │  │
+│  │  动态推理 · 提示词压缩        │  │
 │  │  会话保活 · 工具调用标准化     │  │
 │  │  Token 日志 · 中英文 i18n   │  │
 │  │  透传代理 · 终端命令回退      │  │
@@ -270,8 +268,7 @@ CopilotProxy/
 │   │   └── src/
 │   │       ├── server.js          # 主服务入口 & Hono HTTP 路由 & 仪表盘 TUI
 │   │       ├── snet-handle.js     # 模型管理 & API 请求 & 聊天补全
-│   │       ├── skill-loader.js    # 技能加载（317 个）& 自动匹配 & 上下文注入
-│   │       ├── token-optimizer.js # 9 级提示词压缩引擎
+│   │       ├── token-optimizer.js # 9 级提示词压缩引擎 & Plan 模板
 │   │       ├── concurrency.js     # 并发队列管理 & 指数退避重试 & 工具截断
 │   │       ├── tool-extractor.js  # AI 文本中提取工具调用 & Schema 补全
 │   │       ├── tool-schemas.js    # VS/VSCode 工具 Schema 定义 & 标准化
@@ -286,8 +283,7 @@ CopilotProxy/
 │   │       ├── deepseek-client.js # DeepSeek API 封装
 │   │       ├── mimo-client.js     # MiMo API 封装
 │   │       ├── win-service.js     # Windows 服务集成（bun:ffi + SCM）
-│   │       ├── polyfill.js        # 跨运行时兼容层（Bun/Node）
-│   │       └── skills/            # 317 个编码技能（SKILL.md）
+│   │       └── polyfill.js        # 跨运行时兼容层（Bun/Node）
 ```
 
 ## 🔧 高级特性
@@ -297,23 +293,21 @@ CopilotProxy/
 - 启动时通过 `SNET_LANGUAGE` 环境变量预设语言
 - 默认中文，覆盖 156+ 个翻译 Key：服务状态、API 错误、保活、技能、Token 日志、透传等
 
-### 📚 技能系统
-- **317 个编码技能**：来自 ECC + obra/superpowers + awesome-skills/code-review-skill + dotnet/skills
-- **自动匹配**：基于用户消息内容（685 个中英文关键词），自动匹配相关技能注入系统提示词
-- **会话缓存**：同一会话只匹配一次，后续请求直接复用
-- **Token 优化**：每次只注入 Top 3 最相关技能，控制上下文消耗
+### 🧠 动态推理
+- Pro 模型（v4-pro / v4.5 / MiMo 2.5-pro）自动 HIGH 推理
+- Flash / 非 Pro 模型自动 LOW 推理
+- MiMo 使用 `thinking: { type: "enabled" }`，DeepSeek 使用 `reasoning_effort`
+- 多轮对话自动回传 `reasoning_content`（API 要求）
 
-### 🧠 推理内容管理
-- 推理模型自动回传 `reasoning_content`（API 要求）
-- 非推理模型自动剥离（避免 400 错误）
-- 跨会话推理缓存（工作区感知）
-- 推理回退检测：连续空思考自动切换策略
+### 🗺️ Plan 模板
+- AI 启动多步骤任务时注入结构化 Markdown 计划模板
+- 包含步骤列表、注意事项、验证标准
+- 引导 AI 创建可追踪的完整计划
 
-### 📏 上下文自动压缩
-- 重复文件读取去重（仅保留最新）
-- 超长工具结果截断（Head + Tail 策略）
-- 旧消息摘要注入（`<compact-summary>` 模式）
-- 9 级压缩可选，默认关闭
+### 📏 上下文管理
+- 超长工具结果截断（>4K 字符）
+- Offset 提示：引导 AI 按偏移量继续读取而非重复读取
+- 1M 上下文窗口上报（让 Copilot 知道可用大窗口）
 
 ### 🔄 智能重试
 - 指数退避 + 随机抖动
