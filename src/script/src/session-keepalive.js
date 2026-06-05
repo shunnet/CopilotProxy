@@ -106,10 +106,7 @@ async function doKeepalive(sessionId) {
   }
 
   if (_sessions.has(sessionId)) {
-    if (!existing) {
-    log("[keepalive] tracking session " + sessionId.slice(0,8) + " (" + provider + "/" + model.split(":")[0] + ")");
-  }
-  scheduleKeepalive(sessionId);
+    scheduleKeepalive(sessionId);
   }
 }
 

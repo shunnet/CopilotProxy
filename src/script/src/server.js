@@ -69,6 +69,8 @@ const _isPlainMode = process.argv.includes("--plain") || Bun.env.SNET_PLAIN === 
 
 // 构建日期文件（由构建脚本写入）
 const VERSION_FILE = ".version";
+// Version is set at build time by CI. The .version file (if present) overrides
+// the displayed date; this string is the proxy's semantic version identifier.
 const SNET_VERSION = "420.96.00";
 
 // ── Logging ──
@@ -162,7 +164,7 @@ const err = (msg) => logErr(msg);
 `);
       log(t("creatingEnv"));
     }
-  } catch { /* fs模块不可用，忽略 */ }
+  } catch (e) { debug(`[startup] .env create failed: ${e.message?.slice(0, 80)}`); }
 })();
 
 // No API key needed — free tier works without
@@ -324,13 +326,38 @@ const _skillsMatched = new Map(); // sessionKey → [skillNames], avoids re-matc
 const _collapsibleReasoning = (process.env.COLLAPSIBLE_REASONING || "true").toLowerCase() !== "false";
 const _THINKING_BLOCK_START = _collapsibleReasoning ? "<details>\n<summary>snet Thinking</summary>\n\n" : "<!-- snet-thinking -->\n";
 const _THINKING_BLOCK_END = _collapsibleReasoning ? "\n</details>\n\n" : "\n<!-- /snet-thinking -->\n\n";
+// CR-3: Bounded regex to prevent ReDoS — uses {0,200000}? instead of unbounded *
+// to limit backtracking on malformed/missing closing tags.
 const _THINKING_STRIP_RE = new RegExp(
-  `<details\\b[^>]*>\\s*<summary\\b[^>]*>\\s*snet Thinking\\s*</summary>[\\s\\S]*?</details>\\s*|<!-- snet-thinking -->\\s*[\\s\\S]*?\\s*<!-- /snet-thinking -->\\s*`,
+  `<details\\b[^>]{0,100}>\\s*<summary\\b[^>]{0,100}>\\s*snet Thinking\\s*</summary>[\\s\\S]{0,200000}?</details>\\s*|<!-- snet-thinking -->\\s*[\\s\\S]{0,200000}?\\s*<!-- /snet-thinking -->\\s*`,
   "gi"
 );
 function _stripDisplayedThinking(content) {
   if (typeof content !== "string") return content;
-  return content.replace(_THINKING_STRIP_RE, "").trimStart();
+  // Safety: if regex fails on malformed input (no closing tag), fall back to indexOf-based strip
+  try {
+    return content.replace(_THINKING_STRIP_RE, "").trimStart();
+  } catch {
+    // Fallback: manual strip for malformed thinking blocks
+    let result = content;
+    const startTag = /<details\b[^>]*>\s*<summary\b[^>]*>\s*snet Thinking\s*<\/summary>/gi;
+    const endTag = /<\/details>/gi;
+    // Remove complete pairs via indexOf
+    let i = 0;
+    while (i < result.length) {
+      startTag.lastIndex = i;
+      const sm = startTag.exec(result);
+      if (!sm) break;
+      endTag.lastIndex = sm.index + sm[0].length;
+      const em = endTag.exec(result);
+      if (!em) break;
+      result = result.slice(0, sm.index) + result.slice(em.index + em[0].length);
+      i = sm.index;
+    }
+    // Also strip comment-based markers
+    result = result.replace(/<!-- snet-thinking -->[\s\S]*?<!-- \/snet-thinking -->/gi, "");
+    return result.trimStart();
+  }
 }
 
 // NOTE: All helper functions below (sanitizeContent, processThinkTags, oaiResp, apiErr, etc.)
@@ -1087,7 +1114,7 @@ app.post("/v1/chat/completions", async c => {
               type: tc.type || "function",
               function: {
                 name: tc.function?.name || tc.name || "unknown",
-                arguments: typeof tc.function?.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function?.arguments || tc.arguments || {}),
+                arguments: typeof tc.function?.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function?.arguments || {}),
               },
             }));
             const msg = { role: "assistant", content: null, tool_calls: normalizedCalls };
@@ -1112,7 +1139,7 @@ app.post("/v1/chat/completions", async c => {
           }
       } else if (role === "user") {
         userMsgs.push(m);
-} else if (role === "tool") {
+      } else if (role === "tool") {
         // UNIVERSAL check: validate tool messages have matching preceding tool_calls
         // (was LP-only; now applies to ALL clients including DeepSeek/MiMo)
         const orphanCheck = checkOrphanToolMessage(userMsgs, m, clientTag);
@@ -1134,10 +1161,12 @@ app.post("/v1/chat/completions", async c => {
                 if (cmd) {
                   // Auto-fix: replace pwsh with powershell (pwsh/PS Core may not be installed)
                   cmd = cmd.replace(/^pwsh(\.exe)?(\s+-)/i, "powershell$2");
-                  // CR-1: Allowlist of safe commands — only permit read-only/development operations
-                  const SAFE_CMD_RE = /^(dir|ls|echo|type|cat|head|tail|find|findstr|where|which|node\s|npm\s|git\s|dotnet\s|python\s|go\s|rustc\s|cargo\s|node\s|tsc\s|eslint\s|prettier\s|pwsh\s+-Command|powershell\s+-Command|Get-ChildItem|Get-Content|Get-Location|Select-String|Test-Path|Write-Output|Get-Process|Get-Service)/i;
-                  // Also block dangerous patterns as additional defense-in-depth
-                  const DANGEROUS_RE = /\b(rmdir\s+\/[sq]\s+\/|del\s+\/[fsq]\s+|format\s+[a-z]:|Remove-Item\s+-Recurse\s+-Force|reg\s+(delete|add)|rm\s+-rf|>\/dev\/|\|.+shutdown|sc\s+(stop|delete))/i;
+                  // CR-1: Strict allowlist — only truly read-only inspection commands.
+                  // Commands that can execute arbitrary code (node, python, go, etc.) are
+                  // intentionally excluded. Use the VS terminal for write operations.
+                  const SAFE_CMD_RE = /^(dir|ls|echo|type|cat|head|tail|find|findstr|where|which|git\s+(status|log|diff|show|branch|tag|stash\s+list|remote\s+-v|rev-parse|config\s+--get)|dotnet\s+(--list|--info|--version)|pwsh\s+-Command\s+(Get-ChildItem|Get-Content|Get-Location|Select-String|Test-Path|Write-Output)|powershell\s+-Command\s+(Get-ChildItem|Get-Content|Get-Location|Select-String|Test-Path|Write-Output))/i;
+                  // Block any command containing potentially dangerous patterns
+                  const DANGEROUS_RE = /\b(rmdir\s+\/[sq]\s+\/|del\s+\/[fsq]\s+|format\s+[a-z]:|Remove-Item\s+-Recurse\s+-Force|reg\s+(delete|add)|rm\s+-rf|>\/dev\/|\|.+shutdown|sc\s+(stop|delete)|&\s*\{|Invoke-Expression|Invoke-WebRequest|Invoke-RestMethod|Start-Process|New-Object\s+Net\.|iex\s|`[^`]*`)/i;
                   if (DANGEROUS_RE.test(cmd)) {
                     log(`[term] BLOCKED dangerous cmd: ${cmd.slice(0, 80)}`);
                     tc = `Command blocked for safety: ${cmd.slice(0, 150)}`;
@@ -1146,7 +1175,7 @@ app.post("/v1/chat/completions", async c => {
                   }
                   if (!SAFE_CMD_RE.test(cmd)) {
                     log(`[term] BLOCKED non-allowlisted cmd: ${cmd.slice(0, 80)}`);
-                    tc = `Command blocked (not in safe command allowlist): ${cmd.slice(0, 150)}`;
+                    tc = `Command blocked (not in safe command allowlist). Only read-only inspection commands are permitted: ${cmd.slice(0, 150)}`;
                     userMsgs.push({ role: "tool", tool_call_id: m.tool_call_id || "unknown", content: tc });
                     continue;
                   }
@@ -1533,10 +1562,12 @@ app.post("/v1/chat/completions", async c => {
     // ── Stream mode: pipe directly from upstream async generator ──
     if (streamMode) {
       await cm.acquireModel(goModel);
-      return stream(c, async (s) => {
-        let released = false;
-        const release = () => { if (!released) { released = true; cm.releaseModel(goModel); } };
-        try {
+      // H4: Guard against synchronous stream() failure — ensures model slot is always released
+      try {
+        return stream(c, async (s) => {
+          let released = false;
+          const release = () => { if (!released) { released = true; cm.releaseModel(goModel); } };
+          try {
         const w = (o) => s.write(`data: ${JSON.stringify(o)}\n\n`);
         const base = { id: chatId, object: "chat.completion.chunk", created, model, system_fingerprint: systemFp };
 
@@ -1697,6 +1728,11 @@ app.post("/v1/chat/completions", async c => {
           release();
         }
       });
+      } catch (_streamSetupError) {
+        // H4: Release model slot if stream() setup throws synchronously
+        cm.releaseModel(goModel);
+        throw _streamSetupError;
+      }
     }
 
     // ── Non-streaming: collect all chunks, then process ──
@@ -1993,7 +2029,7 @@ app.post("/v1/chat/completions", async c => {
   } catch (e) {
     if (e instanceof APIError && e.status === 400 && /tool|tool_call/i.test(e.message)) {
       let tools = "?";
-      try { tools = _toolNames(compressedMessages); } catch {}
+      try { tools = _toolNames(compressedMessages); } catch (e) { debug(`[_toolNames] failed in error handler: ${e.message?.slice(0, 80)}`); }
       err(`  [400] tool error: ${tools} — ${e.message}`);
     }
     if (e instanceof APIError && e.status === 429) {

@@ -94,6 +94,11 @@ export async function handleServiceCommand(argv) {
   return { handled: false, exitCode: 0 };
 }
 
+// FFI callback buffers must be kept alive to prevent GC. Bun's FFI uses
+// JSCallback objects that are GC-rooted only while referenced from JS.
+// We maintain a bounded array (cap 1000) to prevent OOM in long-running
+// services. Under normal operation (install/start/stop), only ~10 callbacks
+// are created. If this ever becomes a bottleneck, switch to FinalizationRegistry.
 let _keepAlive = [];
 const _KEEPALIVE_MAX = 1000; // prevent OOM in long-running services
 function _keep(buf) { if (_keepAlive.length < _KEEPALIVE_MAX) { _keepAlive.push(buf); } return buf; }

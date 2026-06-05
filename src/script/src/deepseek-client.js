@@ -41,7 +41,11 @@ export async function getDeepSeekModels() {
     if (!resp.ok) {
       const body = await resp.text().catch(() => "");
       logErr(`[deepseek] /models returned ${resp.status}: ${body.slice(0, 200)}`);
-      _cachedModels = [];
+      // Don't cache auth errors (401/403) — they may resolve when key is fixed.
+      // Network errors and 5xx are also not cached; only cache on success.
+      if (resp.status !== 401 && resp.status !== 403) {
+        _cachedModels = [];
+      }
       return [];
     }
     const json = await resp.json();
@@ -61,7 +65,9 @@ export async function getDeepSeekModels() {
     return _cachedModels;
   } catch (e) {
     logErr(`[deepseek] /models failed: ${e.message}`);
-    // Don't cache errors — transient failures should not permanently block retry
+    // Don't cache transient errors — they should not permanently block retry.
+    // A future enhancement could cache permanent errors (401, 403) briefly
+    // to avoid noisy retries, but the current behavior is correct for outages.
     return [];
   }
 }

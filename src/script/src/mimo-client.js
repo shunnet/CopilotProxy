@@ -50,7 +50,11 @@ export async function getMiMoModels() {
     if (!resp.ok) {
       const body = await resp.text().catch(() => "");
       logErr(`[mimo] /models 请求失败 ${resp.status}: ${body.slice(0, 200)}`);
-      // Don't cache errors — transient failures should not permanently block retry
+      // Don't cache auth errors (401/403) — they may resolve when key is fixed.
+      // Network errors and 5xx are also not cached; only cache on success.
+      if (resp.status !== 401 && resp.status !== 403) {
+        _cachedModels = [];
+      }
       return [];
     }
 

@@ -26,7 +26,11 @@ setInterval(function() {
 export const _reasoningCacheMaxEntries = 5000;
 
 // ── Hash helpers ──
-// NOT SHA-256 — 64-bit DJB2 variant. Used for cache key generation only.
+// 64-bit DJB2 variant for cache key generation only (NOT cryptographic).
+// Collision analysis: with 64-bit output and max 5000 entries, collision
+// probability is ~2.7×10⁻¹² (negligible). Keys are also prefixed by domain
+// (c: = conversation, w: = workspace, g: = global) for defense-in-depth.
+// If cache size ever exceeds 100K entries, upgrade to crypto.createHash("sha256").
 function _hash64(data) {
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
   for (let i = 0; i < data.length; i++) {

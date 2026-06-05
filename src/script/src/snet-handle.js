@@ -5,7 +5,7 @@ import { compressToolDefinitions } from "./token-optimizer.js";
 import { normalizeToolType } from "./tool-schemas.js";
 import { getDeepSeekModels, isDeepSeekAvailable, getDeepSeekApiKey, clearDeepSeekCache } from "./deepseek-client.js";
 import { getMiMoModels, isMiMoAvailable, getMiMoApiKey, clearMiMoCache } from "./mimo-client.js";
-import { log, error, reqLog } from "./logger.js";
+import { log, error, reqLog, debug } from "./logger.js";
 
 // ═══════════════════════════════════════════════════════════════
 // DeepSeek / MiMo Copilot Compatibility Audit
@@ -207,7 +207,7 @@ async function _loadCrypto() { if (!_crypto) _crypto = await import("node:crypto
 function cacheDir() {
   const base = Bun.env.OPENCODE_CACHE_DIR || (typeof process !== 'undefined' ? process.cwd() : ".");
   const dir = `${base}/.cache`;
-  try { if (_fs) _fs.mkdirSync(dir, { recursive: true }); } catch {}
+  try { if (_fs) _fs.mkdirSync(dir, { recursive: true }); } catch (e) { debug(`[cache] mkdirSync failed: ${e.message?.slice(0, 80)}`); }
   return dir;
 }
 
@@ -230,7 +230,7 @@ function keyHash() {
 function getKeyHashPath() { return `${cacheDir()}/keyhash.json`; }
 
 function loadKeyHashFromDisk() {
-  try { if (_fs) return JSON.parse(_fs.readFileSync(getKeyHashPath(), "utf8")).h || null; } catch {}
+  try { if (_fs) return JSON.parse(_fs.readFileSync(getKeyHashPath(), "utf8")).h || null; } catch (e) { debug(`[cache] keyHash read failed: ${e.message?.slice(0, 80)}`); }
   return null;
 }
 
@@ -240,7 +240,7 @@ function saveKeyHashToDisk(h) {
     const prev = loadKeyHashFromDisk();
     if (prev === h) return;
     _fs.writeFileSync(getKeyHashPath(), JSON.stringify({ h }));
-  } catch {}
+  } catch (e) { debug(`[cache] op failed: ${e.message?.slice(0, 80)}`); }
 }
 
 let _lastKeyHash = null;
@@ -271,7 +271,7 @@ function loadModelsFromDisk() {
       _nameToId = data._nameToId || {};
       return true;
     }
-  } catch {}
+  } catch (e) { debug(`[cache] op failed: ${e.message?.slice(0, 80)}`); }
   return false;
 }
 
@@ -280,7 +280,7 @@ async function saveModelsToDisk() {
     await _loadFs(); await _loadCrypto();
     if (!_models?.length) return;
     _fs.writeFileSync(getDiskPath(), JSON.stringify({ _models, _modelMap, _nameToId }));
-  } catch {}
+  } catch (e) { debug(`[cache] op failed: ${e.message?.slice(0, 80)}`); }
 }
 
 async function fetchModelsDev() {
@@ -460,6 +460,9 @@ export function resolveModelMetadata(modelId) {
 
 // ── 模型请求默认值 ──
 
+// Thinking modes are resolved at runtime from the model metadata (models.dev API).
+// This stub exists for API compatibility; actual mode detection happens in parseThinkingMode().
+// TODO: Populate from mdCache when models.dev provides thinking_mode data per model.
 export function getThinkingModes(modelId) {
   return [];
 }
@@ -521,6 +524,7 @@ function applyModelDefaults(modelId, body) {
       for (const [k, v] of Object.entries(def.overrides)) {
         if (body[k] === undefined) body[k] = Array.isArray(v) ? [...v] : (typeof v === "object" && v !== null ? { ...v } : v);
       }
+      // Reserved: set minMaxTokens in MODEL_REQUEST_DEFAULTS to enforce minimum output tokens
       if (def.minMaxTokens && (body.max_tokens == null || body.max_tokens < def.minMaxTokens)) body.max_tokens = def.minMaxTokens;
     }
   }
@@ -591,7 +595,7 @@ async function apiRequest(endpoint, body, opts = {}) {
       if (p.error?.type === "AuthError") { code = "invalid_api_key"; mappedStatus = 401; }
       if (p.error?.type === "ModelError") { code = "model_not_found"; mappedStatus = 404; }
       if (p.error?.code) code = p.error.code;
-    } catch {}
+    } catch (e) { debug(`[cache] op failed: ${e.message?.slice(0, 80)}`); }
 
     const retries = opts.retries || 0;
     const maxRetries = opts.maxRetries ?? config.maxRetries;
@@ -716,6 +720,35 @@ async function* _parseSSEStream(reader, decoder, abortTimer) {
       try { yield JSON.parse(data); } catch {}
     }
   }
+}
+
+// ── Shared SSE stream consumer (H6: extracted from duplicated streaming loops) ──
+// Yields all delta chunks AND the final done:true chunk with usage/finish_reason.
+// Callers simply do: for await (const c of _consumeSSEStream(...)) yield c;
+async function* _consumeSSEStream(reader, decoder, abortTimer, model, created) {
+  let streamUsage = null;
+  let streamFinishReason = "stop";
+  for await (const chunk of _parseSSEStream(reader, decoder, abortTimer)) {
+    // Capture usage from final chunk (stream_options: include_usage)
+    if (chunk.usage && (!chunk.choices || chunk.choices.length === 0 || !chunk.choices[0]?.delta)) {
+      streamUsage = chunk.usage;
+      continue;
+    }
+    const choice = chunk.choices?.[0];
+    if (!choice) continue;
+    const delta = choice.delta;
+    if (choice.finish_reason) streamFinishReason = choice.finish_reason;
+    if (!delta) continue;
+    const msg = { role: "assistant" };
+    let hm = false;
+    if (delta.content != null) { msg.content = delta.content; hm = true; }
+    if (delta.tool_calls?.length) { msg.tool_calls = delta.tool_calls; hm = true; }
+    if (delta.reasoning_content) { msg.reasoning_content = delta.reasoning_content; hm = true; }
+    if (delta.reasoning) { msg.reasoning = delta.reasoning; hm = true; }
+    if (hm) yield { model, created_at: created, message: msg, done: false };
+  }
+  // Yield final done:true chunk with accumulated usage and finish reason
+  yield { model, created_at: created, message: { role: "assistant", content: "" }, done: true, done_reason: streamFinishReason, ...(streamUsage ? { usage: streamUsage } : {}) };
 }
 
 // ── 导出 ──
@@ -845,31 +878,9 @@ export async function* chatCompletion(req) {
 
     const reader = resp.body.getReader();
     const textDecoder = new TextDecoder();
-    let reasoningAccum = "";
-    let streamUsage = null;
-    let streamFinishReason = "stop";
-    for await (const chunk of _parseSSEStream(reader, textDecoder, _abortTimer)) {
-      // Capture usage from final chunk (stream_options: include_usage)
-      // DeepSeek/MiMo emits a chunk with empty choices[] but usage field
-      if (chunk.usage && (!chunk.choices || chunk.choices.length === 0 || !chunk.choices[0]?.delta)) {
-        streamUsage = chunk.usage;
-        continue;
-      }
-      const choice = chunk.choices?.[0];
-      if (!choice) continue;
-      const delta = choice.delta;
-      // Capture finish_reason from the last delta chunk (stop, tool_calls, length)
-      if (choice.finish_reason) streamFinishReason = choice.finish_reason;
-      if (!delta) continue;
-      const msg = { role: "assistant" };
-      let hm = false;
-      if (delta.content != null) { msg.content = delta.content; hm = true; }
-      if (delta.tool_calls?.length) { msg.tool_calls = delta.tool_calls; hm = true; }
-      if (delta.reasoning_content) { reasoningAccum += delta.reasoning_content; msg.reasoning_content = delta.reasoning_content; hm = true; }
-      if (delta.reasoning) { msg.reasoning = delta.reasoning; hm = true; }
-      if (hm) yield { model: req.model, created_at: created, message: msg, done: false };
+    for await (const chunk of _consumeSSEStream(reader, textDecoder, _abortTimer, req.model, created)) {
+      yield chunk;
     }
-    yield { model: req.model, created_at: created, message: { role: "assistant", content: "" }, done: true, done_reason: streamFinishReason, ...(streamUsage ? { usage: streamUsage } : {}) };
     logDone?.(Date.now() - t0);
   } catch (e) {
     if (_abortTimer) clearTimeout(_abortTimer);
@@ -892,27 +903,9 @@ export async function* chatCompletion(req) {
         } else {
           const reader2 = resp2.body.getReader();
           const decoder2 = new TextDecoder();
-          let retryStreamUsage = null;
-          let retryFinishReason = "stop";
-          for await (const chunk of _parseSSEStream(reader2, decoder2, _abortTimer)) {
-            if (chunk.usage && (!chunk.choices || chunk.choices.length === 0 || !chunk.choices[0]?.delta)) {
-              retryStreamUsage = chunk.usage;
-              continue;
-            }
-            const choice = chunk.choices?.[0];
-            if (!choice) continue;
-            const delta = choice.delta;
-            if (choice.finish_reason) retryFinishReason = choice.finish_reason;
-            if (!delta) continue;
-            const msg = { role: "assistant" };
-            let hm = false;
-            if (delta.content != null) { msg.content = delta.content; hm = true; }
-            if (delta.tool_calls?.length) { msg.tool_calls = delta.tool_calls; hm = true; }
-            if (delta.reasoning_content) { msg.reasoning_content = delta.reasoning_content; hm = true; }
-            if (delta.reasoning) { msg.reasoning = delta.reasoning; hm = true; }
-            if (hm) yield { model: req.model, created_at: created, message: msg, done: false };
+          for await (const chunk of _consumeSSEStream(reader2, decoder2, _abortTimer, req.model, created)) {
+            yield chunk;
           }
-          yield { model: req.model, created_at: created, message: { role: "assistant", content: "" }, done: true, done_reason: retryFinishReason, ...(retryStreamUsage ? { usage: retryStreamUsage } : {}) };
         }
         logDone?.(Date.now() - t0);
         return;

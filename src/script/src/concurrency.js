@@ -64,6 +64,11 @@ export class ConcurrencyQueue {
     }
   }
 
+  // Thread-safety: Node.js/Bun run JS on a single thread with an event loop.
+  // All synchronous code between await points runs atomically — there are no
+  // preemptive context switches. The _totalQueued++ and running++ operations
+  // are safe because they happen in the same synchronous block as the capacity
+  // check (no await between check and increment).
   async acquire(priority = 0) {
     this._totalQueued++;
     if (this.running >= this.maxConcurrency) {
