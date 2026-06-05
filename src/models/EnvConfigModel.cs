@@ -98,7 +98,7 @@ public class EnvConfigModel
     /// 不同级别对应不同的压缩策略和 Token 节省率
     /// </summary>
     [Description("提示词压缩级别：off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard（默认 off）")]
-    public string CompressionLevel { get; set; } = "standard";
+    public string CompressionLevel { get; set; } = "off";
 
     #endregion
 
