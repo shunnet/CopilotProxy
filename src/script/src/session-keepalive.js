@@ -18,17 +18,12 @@ import { log } from "./logger.js";
 
 const _env = (k, d) => (typeof Bun !== "undefined" ? Bun.env[k] : typeof process !== "undefined" ? process.env[k] : undefined) ?? d;
 const KEEPALIVE_ENABLED = (_env("SESSION_KEEPALIVE_ENABLED", "true")) !== "false";
-const KEEPALIVE_INTERVAL_MS = Math.max(30000, parseInt(_env("SESSION_KEEPALIVE_INTERVAL_MS", "60000"), 10));
-const KEEPALIVE_IDLE_TIMEOUT_MS = Math.max(KEEPALIVE_INTERVAL_MS * 2, parseInt(_env("SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", "300000"), 10));
+const KEEPALIVE_INTERVAL_MS = Math.max(30000, parseInt(_env("SESSION_KEEPALIVE_INTERVAL_MS", "120000"), 10));
+const KEEPALIVE_IDLE_TIMEOUT_MS = Math.max(KEEPALIVE_INTERVAL_MS * 2, parseInt(_env("SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", "600000"), 10));
 const KEEPALIVE_MAX_LIFETIME_MS = Math.max(3600000, parseInt(_env("SESSION_KEEPALIVE_MAX_LIFETIME_MS", "86400000"), 10));
-const _GR = ""; // keepalive log prefix
-const _GRST = "";
 
 const _sessions = new Map();
 let _totalPings = 0;
-if (KEEPALIVE_ENABLED) {
-  log("[keepalive] ENABLED — interval:" + Math.round(KEEPALIVE_INTERVAL_MS/1000) + "s idle_timeout:" + Math.round(KEEPALIVE_IDLE_TIMEOUT_MS/1000) + "s max_lifetime:" + Math.round(KEEPALIVE_MAX_LIFETIME_MS/3600000) + "h");
-}
 
 function getProvider(model) {
   if (isDeepSeekModel(model)) return "deepseek";
@@ -57,7 +52,7 @@ function scheduleKeepalive(sessionId) {
 
   if (entry.timer) clearTimeout(entry.timer);
 
-  entry.timer = setTimeout(() => doKeepalive(sessionId), KEEPALIVE_INTERVAL_MS);
+  entry.timer = setTimeout(() => doKeepalive(sessionId).catch(e => log(`[keepalive] error in doKeepalive: ${e.message}`)), KEEPALIVE_INTERVAL_MS);
   entry.timer.unref?.();
 }
 
@@ -67,7 +62,7 @@ async function doKeepalive(sessionId) {
 
   const idleMs = Date.now() - entry.lastActivity;
   if (idleMs >= KEEPALIVE_IDLE_TIMEOUT_MS) {
-    log(`${_GR}${t("keepaliveIdle", sessionId, Math.round(idleMs / 1000), entry.pingCount || 0)}${_GRST}`);
+    log(`${t("keepaliveIdle", sessionId, Math.round(idleMs / 1000), entry.pingCount || 0)}`);
     if (entry.timer) clearTimeout(entry.timer);
     _sessions.delete(sessionId);
     return;
@@ -75,9 +70,10 @@ async function doKeepalive(sessionId) {
 
   const ageMs = Date.now() - (entry.createdAt || Date.now());
   if (ageMs >= KEEPALIVE_MAX_LIFETIME_MS) {
-    log(`${_GR}${t("keepaliveLifetime", sessionId, Math.round(ageMs / 3600000))}${_GRST}`);
-    entry.createdAt = Date.now();
-    entry.pingCount = 0;
+    log(`${t("keepaliveLifetime", sessionId, Math.round(ageMs / 3600000))}`);
+    if (entry.timer) clearTimeout(entry.timer);
+    _sessions.delete(sessionId);
+    return;
   }
 
   try {
@@ -95,11 +91,11 @@ async function doKeepalive(sessionId) {
       if (chunk.done && chunk.done_reason !== "error") {
         entry.pingCount = (entry.pingCount || 0) + 1;
         _totalPings++;
-        log(`${_GR}${t("keepalivePingOk", sessionId, entry.pingCount, entry.provider, entry.model, Math.round(idleMs / 1000))}${_GRST}`);
+        log(`${t("keepalivePingOk", sessionId, entry.pingCount, entry.provider, entry.model, Math.round(idleMs / 1000))}`);
       }
     }
   } catch (e) {
-    log(`${_GR}${t("keepalivePingFail", sessionId, e.message)}${_GRST}`);
+    log(`${t("keepalivePingFail", sessionId, e.message)}`);
     if (entry.timer) clearTimeout(entry.timer);
     _sessions.delete(sessionId);
     return;
@@ -118,7 +114,7 @@ const _cleanupTimer = setInterval(() => {
     if (idleMs > KEEPALIVE_IDLE_TIMEOUT_MS * 2) {
       if (entry.timer) clearTimeout(entry.timer);
       _sessions.delete(sid);
-      log(`${_GR}[keepalive] cleaned orphaned session ${sid} (idle ${Math.round(idleMs / 1000)}s)${_GRST}`);
+      log(`[keepalive] cleaned orphaned session ${sid} (idle ${Math.round(idleMs / 1000)}s)`);
     }
   }
 }, 300_000); // 每 5 分钟检查一次
@@ -147,22 +143,6 @@ export function trackSession(sessionId, model, messages, clientTag) {
   scheduleKeepalive(sessionId);
 }
 
-export function touchSession(sessionId) {
-  const entry = _sessions.get(sessionId);
-  if (entry) {
-    entry.lastActivity = Date.now();
-    scheduleKeepalive(sessionId);
-  }
-}
-
-export function stopSession(sessionId) {
-  const entry = _sessions.get(sessionId);
-  if (entry) {
-    if (entry.timer) clearTimeout(entry.timer);
-    _sessions.delete(sessionId);
-  }
-}
-
 export function shutdown() {
   let count = 0;
   clearInterval(_cleanupTimer);
@@ -172,7 +152,7 @@ export function shutdown() {
   }
   _sessions.clear();
   if (count > 0) {
-    log(`${_GR}${t("keepaliveShutdown", count, _totalPings)}${_GRST}`);
+    log(`${t("keepaliveShutdown", count, _totalPings)}`);
   }
 }
 
@@ -187,4 +167,3 @@ export function stats() {
   };
 }
 
-export { KEEPALIVE_ENABLED, KEEPALIVE_INTERVAL_MS, KEEPALIVE_IDLE_TIMEOUT_MS, KEEPALIVE_MAX_LIFETIME_MS };

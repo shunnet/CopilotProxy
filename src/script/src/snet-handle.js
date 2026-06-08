@@ -43,17 +43,13 @@ import { log, error, reqLog, debug } from "./logger.js";
 //
 // ═══════════════════════════════════════════════════════════════
 
-// Reasoning cache for DeepSeek (requires reasoning_content on ALL assistant msgs)
-let _lastReasoningContent = "";
-export function setLastReasoning(r) { if (r) _lastReasoningContent = r; }
-
 // 根据模型能力清理消息中的 reasoning_content：
 // - 推理模型：保留（API 要求后续轮次回传）
 // - 非推理模型：移除（会导致 400 错误）
 function _isReasoningModel(modelId) {
   if (!modelId) return false;
   // DeepSeek reasoning models
-  if (/(?:reasoner|v4-pro|r1)/i.test(modelId)) return true;
+  if (/(?:reasoner|v4-pro|(?:^|[-/])r1(?:$|[-/]))/i.test(modelId)) return true;
   // MiMo: only v2.5 and v2.5-pro support thinking
   if (/mimo-v2\.5(?:-pro)?$/i.test(modelId)) return true;
   return false;
@@ -179,16 +175,6 @@ const config = {
     const v = parseInt(Bun.env.MESSAGES_PAGING, 10);
     return isNaN(v) ? 0 : Math.max(0, v);
   },
-  get terminalFallback() {
-    // CR-1: Explicit opt-in required for terminal command execution on server
-    return (Bun.env.TERMINAL_FALLBACK_ENABLED || "false") === "true";
-  },
-  get passthroughBaseUrl() {
-    return Bun.env.PASSTHROUGH_BASE_URL || "";
-  },
-  get passthroughTimeoutMs() {
-    return Math.max(5000, parseInt(Bun.env.PASSTHROUGH_TIMEOUT_MS || "30000", 10));
-  },
 };
 
 // ── 模型列表 ──
@@ -312,13 +298,13 @@ function fmtParamSize(val) {
 }
 
 function inferFamily(modelId) {
-  const c = (modelId || "").replace(/\\s+/g, " ");
+  const c = (modelId || "").replace(/\s+/g, " ");
   if (/\bdeepseek/i.test(c)) return "DeepSeek";
   if (/\bmimo/i.test(c)) return "MiMo";
   return c;
 }
 
-function inferParameterSize(modelId) { return fmtParamSize((modelId || "").match(/(\d+(?:\.\d+)?)\s*([bBmMkK])/) ? (modelId.match(/(\d+(?:\.\d+)?)\s*([bBmMkK])/)[1] + modelId.match(/(\d+(?:\.\d+)?)\s*([bBmMkK])/)[2].toUpperCase()) : ""); }
+function inferParameterSize(modelId) { const m = (modelId || "").match(/(\d+(?:\.\d+)?)\s*([bBmMkK])/); return m ? fmtParamSize(m[1] + m[2].toUpperCase()) : ""; }
 function inferQuantization(modelId) { const m = (modelId || "").match(/(Q\d+[_.]\w+|F\d+|BF\d+|INT\d+|IQ\d+[\w_]*)/i); return m ? m[0] : "F16"; }
 
 async function fetchModels() {
@@ -338,7 +324,7 @@ async function fetchModels() {
         capabilities: { tools: true, vision: false, function_calling: true, tool_calling: true },
         supports_tools: true, supports_function_calling: true,
       });
-      _modelMap[m.id.toLowerCase()] = { id: m.id, name: m.name, tools: true, vision: false, _ds: true };
+      _modelMap[m.id.toLowerCase()] = { id: m.id, name: m.name, tools: true, vision: false, _ds: true, _apiModel: m._apiModel };
       _nameToId[m.name.toLowerCase()] = m.id;
       dsCount++;
     }
@@ -352,11 +338,11 @@ async function fetchModels() {
       models.push({
         name: m.name, model: `${m.id}:latest`, modified_at: now, size: 0, digest: m.id,
         maxParams: m.context_length || 0,
-        details: { parent_model: "", format: "gguf", family: m.family, families: [m.family], parameter_size: `${(m.context_length / 1000).toFixed(0)}K` || "", quantization_level: "F16", tools: true, vision: true, supports_tools: true, supports_function_calling: true, supports_vision: true },
-        capabilities: { tools: true, vision: true, function_calling: true, tool_calling: true },
+        details: { parent_model: "", format: "gguf", family: m.family, families: [m.family], parameter_size: `${(m.context_length / 1000).toFixed(0)}K` || "", quantization_level: "F16", tools: true, vision: false, supports_tools: true, supports_function_calling: true, supports_vision: false },
+        capabilities: { tools: true, vision: false, function_calling: true, tool_calling: true },
         supports_tools: true, supports_function_calling: true,
       });
-      _modelMap[m.id.toLowerCase()] = { id: m.id, name: m.name, tools: true, vision: true, _mimo: true };
+      _modelMap[m.id.toLowerCase()] = { id: m.id, name: m.name, tools: true, vision: false, _mimo: true, _apiModel: m._apiModel };
       _nameToId[m.name.toLowerCase()] = m.id;
       mimoCount++;
     }
@@ -365,7 +351,7 @@ async function fetchModels() {
 
   _models = models;
   const elapsed = Date.now() - start;
-  log(`[model] Refreshed (${Date.now() - start}ms)`);
+  log(`[model] Refreshed (${elapsed}ms)`);
   return _models;
 }
 
@@ -408,9 +394,9 @@ export async function refreshModels() {
 
 export function resolveModel(name) {
   const p = parseThinkingMode(name);
-  const raw = p.model.replace(/\\s+/g, " ");
-  let clean = raw.split(":")[0].trim().toLowerCase().replace(/\\s+/g, " ");
-  const fullClean = raw.replace(/\\s+/g, " ");
+  const raw = p.model.replace(/\s+/g, " ");
+  let clean = raw.split(":")[0].trim().toLowerCase().replace(/\s+/g, " ");
+  const fullClean = raw.replace(/\s+/g, " ");
   if (isSeparator(clean)) return { id: clean, name: clean, tools: false, vision: false, separator: true };
   if (_modelMap[clean]) return _modelMap[clean];
   if (_nameToId[fullClean]) { const nmId = _nameToId[fullClean]; if (_modelMap[nmId.toLowerCase()]) return _modelMap[nmId.toLowerCase()]; }
@@ -422,9 +408,9 @@ export function resolveModel(name) {
 export function isKnownModel(id) {
   if (!id) return false;
   const p = parseThinkingMode(id);
-  const raw = p.model.replace(/\\s+/g, " ");
-  let clean = raw.split(":")[0].trim().toLowerCase().replace(/\\s+/g, " ");
-  const fullClean = raw.replace(/\\s+/g, " ");
+  const raw = p.model.replace(/\s+/g, " ");
+  let clean = raw.split(":")[0].trim().toLowerCase().replace(/\s+/g, " ");
+  const fullClean = raw.replace(/\s+/g, " ");
   if (isSeparator(clean)) return true;
   if (_modelMap[clean] || _nameToId[clean] || _nameToId[fullClean]) return true;
   return false;
@@ -445,12 +431,12 @@ export function isMiMoModel(id) {
 
 // ── 推理模式 ──
 export function resolveModelMetadata(modelId) {
-  const clean = (modelId || "").replace(/\\s+/g, " ");
+  const clean = (modelId || "").replace(/\s+/g, " ");
   const allModels = { ...((_mdCache && _mdCache["opencode-go"]?.models) || {}), ...((_mdCache && _mdCache["opencode"]?.models) || {}) };
   const mdModel = allModels[clean];
   return {
     context_length: mdModel?.limit?.context || (isDeepSeekModel(modelId) || isMiMoModel(modelId) ? 1048576 : config.defaultContextLength),
-    capabilities: isMiMoModel(modelId) ? ["chat", "completion", "vision", "tools", "agent"] : ["chat", "completion", "tools", "agent"],
+    capabilities: isMiMoModel(modelId) ? ["chat", "completion", "tools", "agent"] : ["chat", "completion", "tools", "agent"],
     family: mdModel?.name || inferFamily(clean),
     parameter_size: fmtParamSize(mdModel?.parameter_size || mdModel?.parameter_count || inferParameterSize(clean)) || "",
     quantization_level: inferQuantization(clean),
@@ -468,7 +454,7 @@ export function getThinkingModes(modelId) {
 }
 
 export function parseThinkingMode(modelName) {
-  let clean = (modelName || "").replace(/\\s+/g, " ");
+  let clean = (modelName || "").replace(/\s+/g, " ");
   if (!clean) return { model: modelName, thinking: null };
 
   let m = clean.match(/^(.+?)\/(\d)_\(?(low|medium|high|maximum|xhigh)\)?$/i);
@@ -703,6 +689,7 @@ function _compactContext(messages) {
   return result;
 }
 
+
 // ── Shared SSE streaming parser ──
 async function* _parseSSEStream(reader, decoder, abortTimer) {
   let buffer = "";
@@ -753,7 +740,7 @@ async function* _consumeSSEStream(reader, decoder, abortTimer, model, created) {
 
 // ── 导出 ──
 export async function* chatCompletion(req) {
-  const thinkingTag = req.thinkingTag !== undefined ? req.thinkingTag : parseThinkingMode(req.model).thinking;
+  const thinkingTag = req._noThinking ? null : (req.thinkingTag !== undefined ? req.thinkingTag : parseThinkingMode(req.model).thinking);
   const p = parseThinkingMode(req.model);
   const model = p.model;
   const info = resolveModel(model);
@@ -789,12 +776,14 @@ export async function* chatCompletion(req) {
   }
 
   const body = {
-    model: info.id,
+    model: info._apiModel || info.id?.replace(/^(ds|mimo)\//, ""),
     messages: messages.map(msg => {
       const out = { role: msg.role, content: msg.content };
       if (msg.tool_calls?.length) out.tool_calls = msg.tool_calls;
       if (msg.tool_call_id) out.tool_call_id = msg.tool_call_id;
-      if (msg.reasoning_content) out.reasoning_content = msg.reasoning_content;
+      // DeepSeek requires reasoning_content on EVERY assistant message in thinking mode,
+      // even if empty string. Filtering out empty values breaks the chain.
+      if (msg.reasoning_content !== undefined && thinkingTag) out.reasoning_content = msg.reasoning_content;
       if (msg.images?.length) {
         out.content = [{ type: "text", text: msg.content || "" }, ...msg.images.map(img => ({ type: "image_url", image_url: { url: `data:image/png;base64,${img}` } }))];
       }
@@ -837,9 +826,9 @@ export async function* chatCompletion(req) {
   // FIXED: Validate tool count against provider limits
   // NOTE: Static import at top of file to avoid dynamic import in Bun compiled binary
   if (body.tools?.length) {
-    const maxTools = isDS ? 128 : 128; // both DeepSeek and MiMo support 128 tools
-    if (body.tools.length > maxTools) {
-      throw new APIError(400, "", `Too many tools (${body.tools.length}). Provider supports a maximum of ${maxTools} tools.`);
+    const MAX_TOOLS = 128; // both DeepSeek and MiMo support 128 tools
+    if (body.tools.length > MAX_TOOLS) {
+      throw new APIError(400, "", `Too many tools (${body.tools.length}). Provider supports a maximum of ${MAX_TOOLS} tools.`);
     }
   }
 
@@ -851,7 +840,7 @@ export async function* chatCompletion(req) {
   }
 
   const lastMsg = body.messages?.[body.messages.length - 1];
-  const preview = (typeof lastMsg?.content === "string" ? lastMsg.content : "").replace(/\\s+/g, " ");
+  const preview = (typeof lastMsg?.content === "string" ? lastMsg.content : "").replace(/\s+/g, " ");
   const provider = isDeepSeekModel(info.id) ? "deepseek" : "mimo";
 
   try {
@@ -862,78 +851,34 @@ export async function* chatCompletion(req) {
     if (req.stream === false) {
       const data = await resp.json();
       const choice = data.choices[0];
-      // Cache reasoning_content for future requests
-      if (choice.message?.reasoning_content) {
-        setLastReasoning(choice.message.reasoning_content);
-      }
       clearTimeout(_abortTimer);
       yield {
         model: req.model, created_at: created,
         message: { role: "assistant", content: choice.message.content, tool_calls: choice.message.tool_calls, reasoning_content: choice.message.reasoning_content },
         done: true, done_reason: choice.finish_reason ?? "stop", usage: data.usage,
       };
-      logDone?.(Date.now() - t0);
+      logDone?.(Date.now() - t0, data.usage);
       return;
     }
 
     const reader = resp.body.getReader();
     const textDecoder = new TextDecoder();
+    let _streamUsage = null;
     for await (const chunk of _consumeSSEStream(reader, textDecoder, _abortTimer, req.model, created)) {
+      if (chunk.usage) _streamUsage = chunk.usage;
       yield chunk;
     }
-    logDone?.(Date.now() - t0);
+    logDone?.(Date.now() - t0, _streamUsage);
   } catch (e) {
     if (_abortTimer) clearTimeout(_abortTimer);
     if (e instanceof APIError && e.status === 429) {
       yield { model: req.model, created_at: created, message: { role: "assistant", content: "Rate limit exceeded." }, done: true, done_reason: "stop" };
       return;
     }
-        // Handle DeepSeek reasoning_content error: retry once without thinking
-    if ((isDS || isMiMo) && e instanceof APIError && e.status === 400 && /reasoning_content.*must be passed back/i.test(e.message)) {
-      error(`[${provider}] reasoning_content error, retrying without reasoning_effort`);
-      delete body.reasoning_effort;
-      delete body.thinking;
-      body.max_tokens = Math.max(body.max_tokens || 4096, 2048);
-      try {
-        const resp2 = await apiRequest("/chat/completions", body, {});
-        if (req.stream === false) {
-          const data = await resp2.json();
-          const choice = data.choices[0];
-          yield { model: req.model, created_at: created, message: { role: "assistant", content: choice.message.content, tool_calls: choice.message.tool_calls, reasoning_content: choice.message.reasoning_content }, done: true, done_reason: choice.finish_reason ?? "stop", usage: data.usage };
-        } else {
-          const reader2 = resp2.body.getReader();
-          const decoder2 = new TextDecoder();
-          for await (const chunk of _consumeSSEStream(reader2, decoder2, _abortTimer, req.model, created)) {
-            yield chunk;
-          }
-        }
-        logDone?.(Date.now() - t0);
-        return;
-      } catch (retryErr) {
-        error(`[${provider}] retry also failed: ${retryErr.message}`);
-      }
-    }
+    // reasoning_content retries are handled by server.js (last-resort stripping)
     if (e instanceof APIError) throw e;
     error(`[chat] ${e.message}`);
     yield { model: req.model, created_at: created, message: { role: "assistant", content: t("apiError") }, done: true, done_reason: "error" };
   }
 }
-// ── 结束 ──
-export async function* generateCompletion(req) {
-  const created = new Date().toISOString();
-  let full = "";
-  for await (const c of chatCompletion({
-    model: req.model,
-    messages: [...(req.system ? [{ role: "system", content: req.system }] : []), { role: "user", content: req.prompt, images: req.images }],
-    options: req.options, stream: req.stream, format: req.format,
-  })) {
-    full += c.message.content;
-    if (c.done) {
-      yield { model: req.model, created_at: created, response: req.stream === false ? full : "", done: true, context: null, total_duration: 0, load_duration: 0, prompt_eval_count: 0, prompt_eval_duration: 0, eval_count: full.split(/\s+/).length, eval_duration: 0 };
-    } else if (req.stream !== false) {
-      yield { model: req.model, created_at: created, response: c.message.content, done: false };
-    }
-  }
-}
-
 export { config, SEP_DEEPSEEK, SEP_MIMO };

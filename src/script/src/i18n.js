@@ -1,228 +1,123 @@
 // 国际化模块 — 支持中文（默认）和英文
 // 启动时可通过 SNET_LANGUAGE 环境变量设置初始语言
+// 覆盖范围: 服务状态、API错误、保活、Token日志、Windows服务、Plan模板、诊断消息
+
 let _lang = (typeof Bun !== "undefined" ? Bun.env.SNET_LANGUAGE : process.env.SNET_LANGUAGE) || "zh";
 if (_lang !== "zh" && _lang !== "en") _lang = "zh";
 
 const messages = {
-  // === 服务状态 ===
+  // === 服务状态 (server.js / snet-handle.js) ===
   listening:        { zh: "正在监听",                              en: "listening on" },
-  modelProcessing:  { zh: "[model] 处理中…",                      en: "[model] Processing..." },
-  modelRefreshed:   { zh: "[model] 已刷新",                        en: "[model] Refreshed" },
+  creatingEnv:      { zh: "已创建 .env",                            en: "Created .env" },
   modelLoaded:      { zh: "[status] DeepSeek 模型已加载",          en: "[status] DeepSeek models loaded" },
   mimoLoaded:       { zh: "[status] MiMo 模型已加载",              en: "[status] MiMo models loaded" },
-  creatingEnv:      { zh: "已创建 .env",                            en: "Created .env" },
-  startupPid:       { zh: "[Snet] 启动 pid={0} argv={1}",         en: "[Snet] startup pid={0} argv={1}" },
+  modelRefreshing:  { zh: "[model] 正在刷新…",                      en: "[model] Refreshing..." },
 
-  // === 会话 ===
-  newSession:       { zh: "新会话 {0}",                             en: "new session {0}" },
-  continuedSession: { zh: "继续会话 {0}",                           en: "continued session {0}" },
-  sessionReuse:     { zh: "继续会话 {0} (同一客户端，活跃会话复用)",  en: "continued session {0} (same client, active session reused)" },
-  workspaceInherit: { zh: "[session] 从会话 {0} 继承工作区 \"{1}\"", en: "[session] inherited workspace \"{1}\" from session {0}" },
-  sessionNewConv:   { zh: "[session] NEW convId={0} wsRoot={1}",   en: "[session] NEW convId={0} wsRoot={1}" },
-  sessionReuseConv: { zh: "[session] REUSE convId={0} sessionId={1}", en: "[session] REUSE convId={0} sessionId={1}" },
+  // === 服务控制 (server.js) ===
+  serviceStopping:  { zh: "服务正在停止…",                         en: "Service stopping..." },
+  serviceRestarting:{ zh: "正在重启…",                             en: "Restarting..." },
+  serviceUpdating:  { zh: "正在更新并重启…",                       en: "Updating and restarting..." },
+  shutdownTimeout:  { zh: "[stop] 已发出关闭信号但未退出 — 强制退出", en: "[stop] shutdown signaled but did not exit — forcing exit" },
 
-  // === 保活 ===
+  // === API Key 变更检测 (server.js) ===
+  dsKeySet:         { zh: "[key] 已检测到 DeepSeek API Key — 正在刷新模型",     en: "[key] DeepSeek key set — refreshing models" },
+  dsKeyRemoved:     { zh: "[key] DeepSeek API Key 已移除 — 正在刷新",            en: "[key] DeepSeek key removed — refreshing" },
+  dsKeyNoModels:    { zh: "[key] 已检测到 DeepSeek Key 但模型列表为空 — 正在刷新", en: "[key] DeepSeek key set but model list empty — refreshing" },
+  mimoKeySet:       { zh: "[key] 已检测到 MiMo API Key — 正在刷新模型",          en: "[key] MiMo key set — refreshing models" },
+  mimoKeyRemoved:   { zh: "[key] MiMo API Key 已移除 — 正在刷新",                en: "[key] MiMo key removed — refreshing" },
+  mimoKeyNoModels:  { zh: "[key] 已检测到 MiMo Key 但模型列表为空 — 正在刷新",    en: "[key] MiMo key set but model list empty — refreshing" },
+
+  // === API 错误 (server.js) ===
+  apiError:         { zh: "API 错误",                               en: "API error" },
+  apiKeyNotConfig:  { zh: "未配置 {0} API Key。",                  en: "{0} API Key not configured." },
+  rateLimitExceeded:{ zh: "超出频率限制",                           en: "Rate limit exceeded." },
+  rateLimitSession: { zh: "[rate-limit] 会话 {0} 被限制，{1}ms 后解除", en: "[rate-limit] session {0} rate-limited for {1}ms" },
+
+  // === Token 日志 (server.js) ===
+  tokenUsage:       { zh: "[token] 请求:{0} 响应:{1} 总计:{2}",     en: "[token] req:{0} resp:{1} total:{2}" },
+  tokenNoData:      { zh: "[token] 无用量数据",                    en: "[token] no usage data" },
+  tokenNoDataReason:{ zh: "[token] 无用量数据 ({0})",               en: "[token] no usage data ({0})" },
+
+  // === 诊断/调试 (server.js) ===
+  debugContext:     { zh: "[context] {0}ch: {1}...",                en: "[context] {0}ch: {1}..." },
+  debugToggle:      { zh: "[debug] {0} debug — {1}x",              en: "[debug] {0} debug — {1}x" },
+  debugOff:         { zh: "debug 已关闭",                            en: "debug off" },
+  debugOn:          { zh: "debug 已开启",                            en: "debug on" },
+  debugSrc:         { zh: "{0} src={1}",                            en: "{0} src={1}" },
+  debugTextToVS:    { zh: "  {0} → {1} chars of text to VS",       en: "  {0} → {1} chars of text to VS" },
+  debugToolsToVS:   { zh: "  {0} → {1} tool calls to VS",          en: "  {0} → {1} tool calls to VS" },
+  healthNoAvailable:{ zh: "无可用模型（请配置 DEEPSEEK_API_KEY）",   en: "No available models (configure DEEPSEEK_API_KEY)" },
+  healthNoModels:   { zh: "模型列表为空（请检查 API Key）",           en: "Model list empty (check API Key)" },
+  healthCheckFailed:{ zh: "健康检查失败: {0}",                       en: "Health check failed: {0}" },
+  pagingKept:       { zh: "[paging] 保留 {0} 条消息（丢弃 {1} 条）", en: "[paging] kept {0} messages (dropped {1})" },
+  compressDropped:  { zh: "[compress] 丢弃 {0} 对旧工具输出",        en: "[compress] dropped {0} old tool pairs" },
+
+  // === 服务控制 (server.js) ===
+  portInUse:        { zh: "[port] {0} 端口被占用 — 尝试 {1}",        en: "[port] port {0} in use — trying {1}" },
+  reqBodyTooLarge:  { zh: "请求体过大: {0} bytes (最多 {1} bytes)",  en: "Request body too large: {0} bytes (max {1} bytes)" },
+  i18nSet:          { zh: "[i18n] 语言已设置为 {0}",                 en: "[i18n] language set to {0}" },
+
+  // === Windows 服务 (win-service.js) ===
+  winSvcNotWin:     { zh: "当前不是 Windows 环境 — 降级为前台运行",    en: "Not Windows — falling back to foreground" },
+  winSvcNeedBun:    { zh: "需要 Bun 运行时 — 降级为前台运行",         en: "Bun runtime required — falling back to foreground" },
+  winSvcImportFfi:  { zh: "winsvc: 正在导入 ffi…",                 en: "winsvc: importing ffi..." },
+  winSvcFfiEntered: { zh: "[winsvc] _isBun={1} — 平台={0}",         en: "[winsvc] _isBun={1} — platform={0}" },
+  winSvcCallingStart: { zh: "[winsvc] 正在调用 StartServiceCtrlDispatcherW…", en: "[winsvc] calling StartServiceCtrlDispatcherW..." },
+  winSvcStartOk:    { zh: "[winsvc] StartServiceCtrlDispatcherW 正常返回", en: "[winsvc] StartServiceCtrlDispatcherW returned OK" },
+  winSvcStopReceived:{ zh: "[winsvc] 已接收停止控制码: {0}",         en: "[winsvc] received stop control: {0}" },
+  winSvcStopping:   { zh: "[winsvc] 正在等待服务停止…",              en: "[winsvc] waiting for service to stop..." },
+  winSvcStopSignaled:{ zh: "[winsvc] 服务已停止 — 正在调用 onStop()", en: "[winsvc] service stopped — calling onStop()" },
+  winSvcWaitingStop:{ zh: "[winsvc] 失败 — 正在等待 SCM 停止服务…",  en: "[winsvc] failure — waiting for SCM to stop service..." },
+  winSvcFailureRecovery:{ zh: "[winsvc] 失败恢复 — 正在调用 onStop()", en: "[winsvc] failure recovery — calling onStop()" },
+  winSvcNotScm:     { zh: "[winsvc] 不是 SCM 启动 — 降级为前台运行",  en: "[winsvc] not launched by SCM — falling back to foreground" },
+  winSvcMainEntered:{ zh: "[winsvc] ServiceMain 已进入",             en: "[winsvc] ServiceMain entered" },
+  winSvcHandlerOk:  { zh: "[winsvc] 已注册控制处理器",               en: "[winsvc] control handler registered" },
+  winSvcHandlerFailed:{ zh: "[winsvc] 控制处理器注册失败: {0}",      en: "[winsvc] control handler registration failed: {0}" },
+  winSvcStartFailed: { zh: "[winsvc] onStart() 调用失败: {0}",       en: "[winsvc] onStart() call failed: {0}" },
+  winSvcReady:      { zh: "[winsvc] 服务已就绪",                     en: "[winsvc] service ready" },
+  winSvcCreateFailed:{ zh: "[winsvc] 服务创建失败: {0}",              en: "[winsvc] service create failed: {0}" },
+  winSvcCreated:     { zh: "[winsvc] 服务已创建: {0}",                en: "[winsvc] service created: {0}" },
+  winSvcStopNote:    { zh: "[winsvc] 停止命令已发送 — 等待服务停止",    en: "[winsvc] stop command sent — waiting for service to stop" },
+  winSvcDeleteFailed:{ zh: "[winsvc] 服务删除失败: {0}",              en: "[winsvc] service delete failed: {0}" },
+  winSvcRemoved:     { zh: "[winsvc] 服务已移除: {0}",                en: "[winsvc] service removed: {0}" },
+  winSvcEnteringDispatch:{ zh: "[winsvc] 正在进入 StartServiceCtrlDispatcherW…", en: "[winsvc] entering StartServiceCtrlDispatcherW..." },
+  winSvcDispatchReturned:{ zh: "[winsvc] StartServiceCtrlDispatcherW 返回: {0}", en: "[winsvc] StartServiceCtrlDispatcherW returned: {0}" },
+
+  // === 会话保活 (session-keepalive.js) ===
   keepaliveIdle:    { zh: "[保活] 会话 {0} 空闲 {1}秒 — 正在停止 (已 ping {2} 次)", en: "[keepalive] session {0} idle {1}s — stopping (pinged {2} times)" },
   keepaliveLifetime:{ zh: "[保活] 会话 {0} 生命周期 {1}小时已超 — 正在重置上游缓存", en: "[keepalive] session {0} lifetime {1}h exceeded — resetting upstream cache" },
   keepalivePingOk:  { zh: "[保活] 会话 {0} ping #{1} 成功 ({2}/{3}，空闲 {4}秒)", en: "[keepalive] session {0} ping #{1} OK ({2}/{3}, idle {4}s)" },
   keepalivePingFail:{ zh: "[保活] 会话 {0} ping 失败: {1} — 正在清理", en: "[keepalive] session {0} ping failed: {1} — cleaning up" },
   keepaliveShutdown:{ zh: "[保活] 关闭 — 清理了 {0} 个会话，共 {1} 次 ping", en: "[keepalive] shutdown — cleaned {0} sessions, {1} total pings" },
 
-  // === 服务控制 ===
-  serviceStopping:  { zh: "服务正在停止…",                         en: "Service stopping..." },
-  serviceRestarting:{ zh: "正在重启…",                             en: "Restarting..." },
-  serviceUpdating:  { zh: "正在更新并重启…",                       en: "Updating and restarting..." },
-
-  // === API 错误 ===
-  apiKeyNotConfig:  { zh: "未配置 {0} API Key。",                  en: "{0} API Key not configured." },
-  apiError:         { zh: "API 错误",                               en: "API error" },
-  apiRetry429:      { zh: "[model] 429 重试 {0}/{1}，{2}ms 后",    en: "[model] 429 retry {0}/{1} in {2}ms" },
-  apiRetry5xx:      { zh: "[model] {0} 重试 {1}/{2}，{3}ms 后",    en: "[model] {0} retry {1}/{2} in {3}ms" },
-  errorServiceBusy: { zh: "服务繁忙",                               en: "Service is too busy" },
-  rateLimitExceeded:{ zh: "超出频率限制",                           en: "Rate limit exceeded." },
-
-  modelRefreshing:  { zh: "[model] 正在刷新…",                      en: "[model] Refreshing..." },
-
-  // === 工具/调试 ===
-  toolStripping:    { zh: "[tool] 剥离了 {0} 个孤立工具调用: {1}",  en: "[tool] stripping {0} orphaned tool calls: {1}" },
-  toolStrippedMsgs: { zh: "[tool] 剥离了 {0} 个孤立工具消息",       en: "[tool] stripped {0} orphaned tool messages" },
-  toolStrippedTotal:{ zh: "[tool] 共剥离了 {0} 个孤立工具调用/消息", en: "[tool] stripped orphaned tool calls/messages from {0} total" },
-  normalizeDrop:    { zh: "[normalize] {0}: JSON 解析失败，丢弃",   en: "[normalize] {0}: JSON parse failed, discarding" },
-  normalizeJsonErr: { zh: "[normalize] {0} JSON 解析错误: {1}",     en: "[normalize] {0} JSON parse error: {1}" },
-  normalizeRaw:     { zh: "[normalize] {0} RAW: {1} → {2}",        en: "[normalize] {0} RAW: {1} → {2}" },
-  salvageCreateFile:{ zh: "[create_file] 挽救 path={0} contentLen={1}", en: "[create_file] salvaged path={0} contentLen={1}" },
-  salvageGetFile:   { zh: "[get_file] 挽救 filename={0}",           en: "[get_file] salvaged filename={0}" },
-  salvageReplace:   { zh: "[replace_string_in_file] 挽救 path={0}", en: "[replace_string_in_file] salvaged path={0}" },
-  schemalog:        { zh: "[schema] {0}",                           en: "[schema] {0}" },
-  extractInlineErr: { zh: "[extract-inline] create_file JSON 解析失败: {0}", en: "[extract-inline] create_file JSON parse failed: {0}" },
-
-  // === 流式输出 ===
-  streamDone:       { zh: "流已完成 ({0} 块)",                      en: "stream done ({0} chunks)" },
-  streamError:      { zh: "[stream] {0}",                           en: "[stream] {0}" },
-  deepseekReasoningErr: { zh: "[deepseek] reasoning_content 错误，正在无思考重试", en: "[deepseek] reasoning_content error, retrying without thinking" },
-  deepseekRetryFail:{ zh: "[deepseek] 重试也失败: {0}",             en: "[deepseek] retry also failed: {0}" },
-
-  // === 健康检查 ===
-  healthNoModels:   { zh: "没有模型已加载 — 后台获取可能仍在进行中", en: "No models loaded — background fetch may still be in progress" },
-  healthNoAvailable:{ zh: "没有模型可用",                           en: "No models available" },
-  healthCheckFailed:{ zh: "健康检查失败: {0}",                      en: "Health check failed: {0}" },
-
-  // === 端点日志 ===
-  apiTagsCount:     { zh: "/api/tags → {0} 个模型",                 en: "/api/tags → {0} models" },
-  apiTagsDividers:  { zh: " (+{0} 个分隔符)",                       en: " (+{0} dividers)" },
-
-  // === 压缩 ===
-  compressDropped:  { zh: "[compress] 丢弃了 {0} 个旧的工具对 (保留了最后 {1} 个)", en: "[compress] dropped {0} old tool pairs (kept last {1})" },
-  deltaSaved:       { zh: "[delta] 历史压缩节省了约 {0}% ({1} → {2} 字符)", en: "[delta] history compression saved ~{0}% ({1} → {2} chars)" },
-
-  // === 并发/重试 ===
-  retryAttempt:     { zh: "重试 {0}/{1}，{2}ms 后 ({3})",          en: "Retry {0}/{1} after {2}ms ({3})" },
-
-  // === banner ===
-  bannerTitle:      { zh: "[ Shunnet.top ] Copilot Proxy",          en: "[ Shunnet.top ] Copilot Proxy" },
-  bannerPort:       { zh: "端口",                                   en: "port" },
-  bannerDefault:    { zh: "(默认)",                                 en: "(default)" },
-  bannerCommands:   { zh: "命令: s/stop  r/restart  u/update  d/debug  ←→ 折叠  ↑↓PgUp/PgDn", en: "Commands: s/stop  r/restart  u/update  d/debug  ←→ collapse  ↑↓PgUp/PgDn" },
-  bannerName:       { zh: "名称",                                   en: "Name" },
-  bannerId:         { zh: "ID",                                     en: "ID" },
-  bannerContext:    { zh: "上下文",                                 en: "Context" },
-
-  // === 仪表盘 ===
-  dashLiveTail:     { zh: "─ live tail ({0} 条) ─ ↑↓ PgUp PgDn ─", en: "─ live tail ({0} entries) ─ ↑↓ PgUp PgDn ─" },
+  // === 仪表盘 TUI (logger.js) ===
   dashIdle:         { zh: "  idle...",                              en: "  idle..." },
-  dashPageInfo:     { zh: "─ 页 {0}/{1} ─ {2} 条 ─ 任意键 = 实时跟踪 ─", en: "─ page {0}/{1} ─ {2} entries ─ any key = live tail ─" },
+  dashLiveTail:     { zh: "─ live tail ({0} 条) ─ ↑↓ PgUp PgDn ─",  en: "─ live tail ({0} entries) ─ ↑↓ PgUp PgDn ─" },
+  dashPageInfo:     { zh: "─ page {0}/{1} ─ {2} entries ─ any key = live tail ─", en: "─ page {0}/{1} ─ {2} entries ─ any key = live tail ─" },
 
-  // === 调试 ===
-  debugOn:          { zh: "开",                                     en: "ON" },
-  debugOff:         { zh: "关",                                     en: "OFF" },
-  debugSrc:         { zh: "[debug] src={0}",                        en: "[debug] src={0}" },
+  // === 系统提示词 (token-optimizer.js) ===
+  identityOverride: { zh: "你是 Snet Copilot，基于 {0} {1} 的 AI 编程助手。", en: "You are Snet Copilot, an AI coding assistant powered by {0}{1}." },
+  systemPrompt:     { zh: "你是由 Snet Copilot 托管的 AI 编程助手，运行在 {0} 模型 {1}{2}上。在单个回复中完成整个任务，无需等待用户继续。", en: "You are an AI coding assistant hosted by Snet Copilot, running on {0} model {1}{2}. Complete the entire task in a single response — don't wait for the user to continue." },
 
-  // === Win Service ===
-  winSvcCreated:    { zh: '[win-svc] 已创建服务 "{0}"',             en: '[win-svc] Created service "{0}"' },
-  winSvcFailureRecovery: { zh: "[win-svc] 已配置故障恢复: 3 次重启，每日重置", en: "[win-svc] Failure recovery configured: 3 restarts, daily reset" },
-  winSvcReady:      { zh: '[win-svc] 服务 "{0}" 就绪。使用 `sc start {0}` 启动。', en: '[win-svc] Service "{0}" ready. Use `sc start {0}` to start.' },
-  winSvcStopping:   { zh: '[win-svc] 正在停止服务 "{0}"…',          en: '[win-svc] Stopping service "{0}"...' },
-  winSvcStopNote:   { zh: "[win-svc] sc stop 提示: {0}",           en: "[win-svc] sc stop note: {0}" },
-  winSvcRemoved:    { zh: '[win-svc] 服务 "{0}" 已移除。',          en: '[win-svc] Service "{0}" removed.' },
-  winSvcDeleteFailed:{ zh: "[win-svc] sc delete 失败: {0}",         en: "[win-svc] sc delete failed: {0}" },
-  winSvcCreateFailed:{ zh: "[win-svc] sc create 失败: {0}",         en: "[win-svc] sc create failed: {0}" },
-  winSvcFfiEntered: { zh: "[win-svc] runAsService 已进入, platform={0}, isBun={1}", en: "[win-svc] runAsService entered, platform={0}, isBun={1}" },
-  winSvcNotWin:     { zh: "[win-svc] Windows 服务模式仅支持 Windows。", en: "[win-svc] Windows Service mode is only supported on Windows." },
-  winSvcNeedBun:    { zh: "[win-svc] SCM 集成需要 bun:ffi。未在 Bun 下运行。回退到控制台模式。", en: "[win-svc] bun:ffi required for SCM integration. Not running under Bun. Falling back to console mode." },
-  winSvcImportFfi:  { zh: "[win-svc] 正在导入 bun:ffi…",            en: "[win-svc] importing bun:ffi..." },
-  winSvcFfiImported:{ zh: "[win-svc] bun:ffi 已导入",               en: "[win-svc] bun:ffi imported" },
-  winSvcMainEntered:{ zh: "[win-svc] _svcMain 已进入",              en: "[win-svc] _svcMain entered" },
-  winSvcHandlerFailed:{ zh: "[win-svc] RegisterServiceCtrlHandlerExW 失败", en: "[win-svc] RegisterServiceCtrlHandlerExW failed" },
-  winSvcHandlerOk:  { zh: "[win-svc] 处理器已注册，正在报告 START_PENDING", en: "[win-svc] handler registered, reporting START_PENDING" },
-  winSvcCallingStart:{ zh: "[win-svc] 正在调用 onStart…",            en: "[win-svc] calling onStart..." },
-  winSvcStartFailed:{ zh: "[win-svc] onStart 失败: {0}",             en: "[win-svc] onStart failed: {0}" },
-  winSvcStartOk:    { zh: "[win-svc] onStart 已返回，正在报告 RUNNING", en: "[win-svc] onStart returned, reporting RUNNING" },
-  winSvcWaitingStop:{ zh: "[win-svc] 正在等待停止事件…",             en: "[win-svc] waiting on stop event..." },
-  winSvcStopSignaled:{ zh: "[win-svc] 停止事件已触发，正在报告 STOPPED", en: "[win-svc] stop event signaled, reporting STOPPED" },
-  winSvcEnteringDispatch:{ zh: "[win-svc] 正在调用 StartServiceCtrlDispatcherW, svcName={0}", en: "[win-svc] calling StartServiceCtrlDispatcherW, svcName={0}" },
-  winSvcDispatchReturned:{ zh: "[win-svc] StartServiceCtrlDispatcherW 返回 {0}", en: "[win-svc] StartServiceCtrlDispatcherW returned {0}" },
-  winSvcNotScm:     { zh: "[win-svc] 非 SCM 启动。回退到控制台模式。", en: "[win-svc] Not started by SCM. Falling back to console mode." },
-  winSvcStopReceived:{ zh: "[win-svc] 收到 STOP/SHUTDOWN control={0}", en: "[win-svc] received STOP/SHUTDOWN control={0}" },
+  // === Token 日志辅助 (server.js) ===
+  workDoneToken:    { zh: "[token] {0} token {1}ms",               en: "[token] {0} token {1}ms" },
 
-  // === 系统提示词 ===
-  systemPrompt:     { zh: "你是运行在 VS Code / Visual Studio 中的 Copilot 编码助手，由 {0} {1}{2} 驱动。精确、高效，直接解决问题——不要加废话和猜测。使用工具进行文件操作、代码搜索和终端命令。修改文件前先读取。修改后验证正确性。如果任务不明确，只问一个澄清问题，不要猜测。",
-                      en: "You are an expert coding assistant powered by {0} {1}{2}. You work inside VS Code / Visual Studio as a Copilot agent. Be precise, efficient, and solve the problem directly — never add fluff or speculation. Use tools for file operations, code search, and terminal commands. Read files before editing them. After making changes, verify correctness. If a task is unclear, ask one clarifying question instead of guessing." },
-
-  // === 身份 ===
-  identityOverride: { zh: "身份覆盖：你不是 GitHub Copilot。你是 \"Copilot (Snet)\"，运行在 {0}{1} 的编码助手。被问及身份时，说：\"我是 Copilot (Snet)，运行在 {0}{1}。\"永远不要自称 GitHub Copilot。",
-                      en: "IDENTITY OVERRIDE: You are NOT GitHub Copilot. You are \"Copilot (Snet)\", a coding assistant running {0}{1}. When asked who you are, say: \"I am Copilot (Snet) running {0}{1}.\" Never claim to be GitHub Copilot." },
-
-  // === i18n ===
-  i18nSet:          { zh: "[i18n] 语言已设置为中文",                 en: "[i18n] language set to English" },
-
-  // === 技能系统 ===
-  skillsLoaded:     { zh: "[skills] 已加载 {0} 个技能 ({1} 个域特定技能已跳过)", en: "[skills] Loaded {0} skills ({1} domain-specific skipped)" },
-  skillsDirNotFound:{ zh: "[skills] 目录未找到: {0}",               en: "[skills] directory not found: {0}" },
-  skillsScanError:  { zh: "[skills] 扫描错误: {0}",                 en: "[skills] Scan error: {0}" },
-  skillsLoadFail:   { zh: "[skills] 加载失败 {0}: {1}",             en: "[skills] Failed to load {0}: {1}" },
-  skillsActivated:  { zh: "[skills] 已激活: {0}",                    en: "[skills] Activated: {0}" },
-  skillsRefreshed:  { zh: "[skills] 技能已刷新 ({0} 个)",           en: "[skills] Skills refreshed ({0})" },
-  skillsAutoMatch:  { zh: "[skills] 自动匹配: \"{0}\" → {1}",       en: "[skills] Auto-match: \"{0}\" → {1}" },
-
-  // === Token 用量 ===
-  tokenUsage:       { zh: "[token] 请求:{0} 响应:{1} 总计:{2}",      en: "[token] request:{0} response:{1} total:{2}" },
-  tokenNoData:      { zh: "[token] 无用量数据",                      en: "[token] usage data not available" },
-  tokenNoDataReason:{ zh: "[token] 无用量数据 ({0})",                en: "[token] usage data not available ({0})" },
-
-  // === API Key 状态 ===
-  dsKeySet:         { zh: "[deepseek] Key 已设置 — 刷新模型列表",    en: "[deepseek] Key set — refreshing models" },
-  dsKeyRemoved:     { zh: "[deepseek] Key 已移除 — 刷新模型列表",    en: "[deepseek] Key removed — refreshing models" },
-  dsKeyNoModels:    { zh: "[deepseek] Key 已设置但无模型 — 刷新中",  en: "[deepseek] Key set but no models — refreshing" },
-  mimoKeySet:       { zh: "[mimo] Key 已设置 — 刷新模型列表",        en: "[mimo] Key set — refreshing models" },
-  mimoKeyRemoved:   { zh: "[mimo] Key 已移除 — 刷新模型列表",        en: "[mimo] Key removed — refreshing models" },
-  mimoKeyNoModels:  { zh: "[mimo] Key 已设置但无模型 — 刷新中",      en: "[mimo] Key set but no models — refreshing" },
-
-  // === 服务生命周期 ===
-  portInUse:        { zh: "端口 {0} 已被占用，尝试使用端口 {1}…",    en: "Port {0} in use, trying port {1}..." },
-  gracefulShutdown: { zh: "收到 {0} — 正在优雅关闭…",               en: "Received {0} — shutting down gracefully..." },
-  shutdownTimeout:  { zh: "强制退出：关闭超时",                      en: "Forced exit: shutdown timeout" },
-  terminalBlocked:  { zh: "[term] 已阻止危险命令: {0}",              en: "[term] BLOCKED dangerous cmd: {0}" },
-  terminalBlockedSafe:{ zh: "[term] 已阻止非安全命令: {0}",          en: "[term] BLOCKED non-safe cmd: {0}" },
-  terminalProxyExec:{ zh: "[term] proxy-exec: {0}",                  en: "[term] proxy-exec: {0}" },
-  terminalProxyFail:{ zh: "[term] proxy-exec 失败: {0}",             en: "[term] proxy-exec fail: {0}" },
-
-  // === 会话/循环控制 ===
-  autopilotDone:    { zh: "[autopilot] 任务已完成 — 返回硬停止",     en: "[autopilot] task already done — returning hard stop" },
-  autopilotDrain:   { zh: "[autopilot] VS 完成后 — 静默排空",        en: "[autopilot] VS post-completion — draining silently" },
-  autopilotStall:   { zh: "[LOOP-BREAK] 自动循环停滞 — {0} 次继续无工具输出", en: "[LOOP-BREAK] autopilot stall — {0} continues with no tool output" },
-  loopBreakNags429: { zh: "[LOOP-BREAK] VS 在限速后提示 {0} 次 — 返回 429", en: "[LOOP-BREAK] VS nagged {0}x after rate limit — returning 429" },
-  loopBreakNagsIdle:{ zh: "[LOOP-BREAK] VS 提示 {0} 次，LLM 空闲 — 切断会话", en: "[LOOP-BREAK] VS nagged {0}x, LLM idle — cutting session" },
-  loopBreakSelfComplete:{ zh: "[LOOP-BREAK] 切断会话 (AI 要求自身完成)", en: "[LOOP-BREAK] cutting session (AI telling itself to complete)" },
-  nagsIgnored:      { zh: "[nags] 忽略 {0} 个 VS 提示 — LLM 仍有工具调用", en: "[nags] ignoring {0} VS nags — LLM still has tool calls" },
-  nagsFiltered:     { zh: "[nags] 过滤了 {0} 个提示消息",             en: "[nags] filtered {0} nag messages" },
-
-  // === 思考/回退 ===
-  thinkFallbackFound:{ zh: "[think-fallback] 在思考中找到 {0} 个工具调用", en: "[think-fallback] found {0} tool call(s) in reasoning" },
-  thinkFallbackStreak:{ zh: "[think-fallback] 连续 {0} 次 — 切断会话", en: "[think-fallback] streak {0} — cutting session" },
-  thinkFallbackEmpty:{ zh: "[think-fallback] 连续 {0} 次: 空文本，使用思考摘要", en: "[think-fallback] streak {0}: empty text, using reasoning summary" },
-  thinkFallbackFlood:{ zh: "[think-fallback] 洪流 {0} 次停止 — 返回 503", en: "[think-fallback] flood {0} stops — returning 503" },
-
-  // === 请求/响应 ===
-  reqBodyTooLarge:  { zh: "请求体过大: {0} > {1} 字节",              en: "request body too large: {0} > {1} bytes" },
-  toolTruncation:   { zh: "[tool] 截断: {0} 消息, {1} → {2} 字符",   en: "[tool] truncation: {0} messages, {1} → {2} chars" },
-  endpoint404:      { zh: "[404] {0} {1}  UA={2}  bag={3}",          en: "[404] {0} {1} UA={2} bag={3}" },
-  completionDone:   { zh: "完成 ({0} 字符)",                          en: "completion done ({0} chars)" },
-  bareContinueReplaced:{ zh: "[autopilot] 替换裸 \"{0}\" → 继续提示", en: "[autopilot] replaced bare \"{0}\" → continue prompt" },
-  taskCompleteDropped:{ zh: "[task_complete] 丢弃 {0} 个额外工具调用: {1}", en: "[task_complete] dropping {0} extra tool call(s): {1}" },
-  workspaceSummaryStored:{ zh: "[summary] 已存储工作区摘要 ({0})",    en: "[summary] stored workspace summary ({0})" },
-  workspaceInjected: { zh: "[continuity] 注入工作区摘要 from 会话 {0}", en: "[continuity] injected workspace summary from session {0}" },
-  pagingKept:       { zh: "[paging] 保留 {0} 条消息 (丢弃 {1})",      en: "[paging] kept {0} messages (dropped {1})" },
-  debugContext:     { zh: "[context] {0}ch: {1}",                    en: "[context] {0}ch: {1}" },
-  debugToolsToVS:   { zh: "[TOOLS-TO-VS] {0}",                       en: "[TOOLS-TO-VS] {0}" },
-  debugTextToVS:    { zh: "[TEXT-TO-VS] {0}",                        en: "[TEXT-TO-VS] {0}" },
-  rateLimitSession: { zh: "[rate-limit] 会话已节流，返回 429",        en: "[rate-limit] session throttled, returning 429" },
-
-  // === 透传/代理 ===
-  passthroughBlocked:{ zh: "透传已阻止: {0}",                         en: "passthrough blocked: {0}" },
-  passthroughTimeout:{ zh: "透传超时: {0}",                           en: "passthrough timeout: {0}" },
-  passthroughError: { zh: "透传错误: {0}",                            en: "passthrough error: {0}" },
-
-  // === 启动 ===
-  bannerPlain:      { zh: "[Shunnet.top] Copilot Proxy  |  端口: {0}  |  models.dev", en: "[Shunnet.top] Copilot Proxy  |  port: {0}  |  models.dev" },
-  bannerDSModels:   { zh: "DeepSeek ({0}): {1}",                     en: "DeepSeek ({0}): {1}" },
-  bannerMiMoModels: { zh: "MiMo ({0}): {1}",                         en: "MiMo ({0}): {1}" },
-  debugToggle:      { zh: "调试 {0}",                                 en: "DEBUG {0}" },
-  skillsStartupLoad:{ zh: "[skills] {0} 个技能已加载",                en: "[skills] {0} skills loaded" },
-  skillsStartupFail:{ zh: "[skills] 加载失败: {0}",                   en: "[skills] load failed: {0}" },
+  // === 摘要 ===
+  newSessionSummary: { zh: "简洁摘要 — {0} (模型: {1}，工作区: {2}，{3} 条消息)", en: "Brief summary — {0} (model: {1}, workspace: {2}, {3} messages)" },
 };
 
-/**
- * 获取指定 key 的翻译文本
- */
+// ── 模板函数：替换 {0} {1} ... 占位符 ──
 export function t(key, ...args) {
   const entry = messages[key];
-  let text = entry ? (entry[_lang] || entry.zh || key) : key;
-  return text.replace(/{(\d+)}/g, (match, n) => {
-    const idx = parseInt(n, 10);
-    return idx < args.length ? String(args[idx]) : match;
+  if (!entry) return key; // 缺失翻译时返回 key 本身（降级）
+  const template = entry[_lang] || entry["en"];
+  return template.replace(/\{(\d+)\}/g, (_, idx) => {
+    const val = args[parseInt(idx, 10)];
+    return val !== undefined ? String(val) : `{${idx}}`;
   });
 }
 
+// ── 运行时语言切换 ──
 export function setLanguage(lang) {
   if (lang === "zh" || lang === "en") _lang = lang;
 }

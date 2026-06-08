@@ -25,11 +25,12 @@ const SERVICE_CONTROL_SHUTDOWN  = 0x00000005;
 const SERVICE_CONTROL_INTERROGATE = 0x00000004;
 const NO_ERROR = 0;
 
+import { exec as _execProcess } from "child_process";
+
 function _exec(cmd) {
   return new Promise((resolve) => {
     try {
-      const { exec } = require("child_process");
-      exec(cmd, { timeout: 30000, windowsHide: true }, (err, stdout, stderr) => {
+      _execProcess(cmd, { timeout: 30000, windowsHide: true }, (err, stdout, stderr) => {
         resolve({ err, stdout: String(stdout||""), stderr: String(stderr||"") });
       });
     } catch (e) {
@@ -38,14 +39,14 @@ function _exec(cmd) {
   });
 }
 
-function _quote(s) { return `"${s}"`; }
+function _quote(s) { return "\"" + s.replace(/"/g, '\\"') + "\""; }
 
 export async function installService(exePath) {
   const binPath = `${_quote(exePath)} --service ${EXTRA_ARGS}`.trim();
   const createCmd = `sc create ${SERVICE_NAME} binPath= ${binPath} start= ${START_TYPE} DisplayName= ${_quote(DISPLAY_NAME)}`;
   const { err, stdout, stderr } = await _exec(createCmd);
   if (err) {
-    process.stderr.write(t("winSvcCreateFailed", err.message || stderr) + "\n");
+  process.stderr.write(t("winSvcCreateFailed", err.message || stderr) + "\n");
     return false;
   }
   process.stdout.write(t("winSvcCreated", SERVICE_NAME) + "\n");
@@ -66,7 +67,7 @@ export async function uninstallService() {
   const stopCmd = `sc stop ${SERVICE_NAME}`;
   const { err: stopErr } = await _exec(stopCmd);
   if (stopErr) {
-    process.stderr.write(t("winSvcStopNote", stopErr.message || "already stopped") + "\n");
+  process.stderr.write(t("winSvcStopNote", stopErr.message || "already stopped") + "\n");
   }
 
   await new Promise(r => setTimeout(r, 2000));
@@ -74,7 +75,7 @@ export async function uninstallService() {
   const delCmd = `sc delete ${SERVICE_NAME}`;
   const { err: delErr, stderr: delStderr } = await _exec(delCmd);
   if (delErr) {
-    process.stderr.write(t("winSvcDeleteFailed", delStderr || delErr.message) + "\n");
+  process.stderr.write(t("winSvcDeleteFailed", delStderr || delErr.message) + "\n");
     return false;
   }
   process.stdout.write(t("winSvcRemoved", SERVICE_NAME) + "\n");
@@ -111,40 +112,51 @@ function _toWideBuf(str) {
   return buf;
 }
 
-export async function runAsService({ onStart, onStop }) {
-  try { process.stderr.write(t("winSvcFfiEntered", process.platform, _isBun) + "\r\n"); } catch {}
-  if (process.platform !== "win32") {
-    process.stderr.write(t("winSvcNotWin") + "\n");
-    await onStart();
-    return;
-  }
-  if (!_isBun) {
-    process.stderr.write(t("winSvcNeedBun") + "\n");
-    await onStart();
-    return;
-  }
-
-  try { process.stderr.write(t("winSvcImportFfi") + "\r\n"); } catch {}
+async function _initFfiBindings() {
   const { dlopen, FFIType, JSCallback, ptr } = await import("bun:ffi");
-  try { process.stderr.write(t("winSvcFfiImported") + "\r\n"); } catch {}
-
   const advapi32 = dlopen("advapi32.dll", {
     StartServiceCtrlDispatcherW: { args: [FFIType.ptr], returns: FFIType.i32 },
     RegisterServiceCtrlHandlerExW: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
     SetServiceStatus: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
   });
-
   const kernel32 = dlopen("kernel32.dll", {
     CreateEventW: { args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.ptr], returns: FFIType.ptr },
     SetEvent: { args: [FFIType.ptr], returns: FFIType.i32 },
     WaitForSingleObject: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
     CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
   });
+  return { dlopen, FFIType, JSCallback, ptr, advapi32, kernel32 };
+}
+
+function _createStatusBuffer() {
+  const buf = _keep(new ArrayBuffer(28));
+  const view = new DataView(buf);
+  return { buf, view };
+}
+
+export async function runAsService({ onStart, onStop }) {
+  // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcFfiEntered", process.platform, _isBun) + "\r\n");
+  if (process.platform !== "win32") {
+  process.stderr.write(t("winSvcNotWin") + "\n");
+    await onStart();
+    return;
+  }
+  if (!_isBun) {
+  process.stderr.write(t("winSvcNeedBun") + "\n");
+    await onStart();
+    return;
+  }
+
+  // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcImportFfi") + "\r\n");
+  const ffi = await _initFfiBindings();
+  const { advapi32, kernel32, FFIType, JSCallback, ptr } = ffi;
 
   let _statusHandle = null;
   let _stopEvent = null;
-  const _svcStatus = _keep(new ArrayBuffer(28));
-  const _stView = new DataView(_svcStatus);
+  const svcStatusBuf = _createStatusBuffer();
+  const _stView = svcStatusBuf.view;
 
   function _reportStatus(state, exitCode = 0, waitHint = 0) {
     if (!_statusHandle) return;
@@ -157,7 +169,7 @@ export async function runAsService({ onStart, onStop }) {
     _stView.setUint32(16, 0, true);
     _stView.setUint32(20, 0, true);
     _stView.setUint32(24, waitHint, true);
-    advapi32.symbols.SetServiceStatus(_statusHandle, ptr(_svcStatus));
+    advapi32.symbols.SetServiceStatus(_statusHandle, ptr(svcStatusBuf.buf));
   }
 
   function _reportStopped(exitCode = 0) { _reportStatus(SERVICE_STOPPED, exitCode, 0); }
@@ -167,9 +179,13 @@ export async function runAsService({ onStart, onStop }) {
       case SERVICE_CONTROL_INTERROGATE: return NO_ERROR;
       case SERVICE_CONTROL_STOP:
       case SERVICE_CONTROL_SHUTDOWN:
-        try { process.stderr.write(t("winSvcStopReceived", dwControl) + "\r\n"); } catch {}
+        // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcStopReceived", dwControl) + "\r\n");
         _reportStatus(SERVICE_STOP_PENDING, NO_ERROR, 30000);
-        try { onStop(); } catch {}
+        try { onStop(); } catch (e) {
+          // stderr/diagnostic writes intentionally ignored during shutdown
+          try { process.stderr.write("[win-service] onStop error: " + (e?.message ?? e) + "\r\n"); } catch {}
+        }
         if (_stopEvent) kernel32.symbols.SetEvent(_stopEvent);
         return NO_ERROR;
       default: return NO_ERROR;
@@ -177,22 +193,28 @@ export async function runAsService({ onStart, onStop }) {
   }
 
   function _svcMain() {
-    try { process.stderr.write(t("winSvcMainEntered") + "\r\n"); } catch {}
+    // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcMainEntered") + "\r\n");
     const ctrlCb = _keep(new JSCallback(_ctrlHandler, {
       args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32,
     }));
     const nameWide = _keep(_toWideBuf(SERVICE_NAME));
     _statusHandle = advapi32.symbols.RegisterServiceCtrlHandlerExW(ptr(nameWide), ctrlCb.ptr, null);
     if (!_statusHandle) { process.stderr.write(t("winSvcHandlerFailed") + "\n"); return; }
-    try { process.stderr.write(t("winSvcHandlerOk") + "\r\n"); } catch {}
+    // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcHandlerOk") + "\r\n");
     _reportStatus(SERVICE_START_PENDING, NO_ERROR, 5000);
-    try { process.stderr.write(t("winSvcCallingStart") + "\r\n"); } catch {}
+    // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcCallingStart") + "\r\n");
     try { onStart(); } catch (e) { process.stderr.write(t("winSvcStartFailed", e) + "\n"); _reportStopped(1); return; }
-    try { process.stderr.write(t("winSvcStartOk") + "\r\n"); } catch {}
+    // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcStartOk") + "\r\n");
     _reportStatus(SERVICE_RUNNING);
-    try { process.stderr.write(t("winSvcWaitingStop") + "\r\n"); } catch {}
+    // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcWaitingStop") + "\r\n");
     kernel32.symbols.WaitForSingleObject(_stopEvent, 0xFFFFFFFF);
-    try { process.stderr.write(t("winSvcStopSignaled") + "\r\n"); } catch {}
+    // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcStopSignaled") + "\r\n");
     _reportStopped();
   }
 
@@ -210,12 +232,13 @@ export async function runAsService({ onStart, onStop }) {
   tableView.setBigUint64(16, 0n, true);
   tableView.setBigUint64(24, 0n, true);
 
-  try { process.stderr.write(t("winSvcEnteringDispatch", SERVICE_NAME) + "\r\n"); } catch {}
+  // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcEnteringDispatch", SERVICE_NAME) + "\r\n");
   const dispatched = advapi32.symbols.StartServiceCtrlDispatcherW(ptr(tableBuf));
-  try { process.stderr.write(t("winSvcDispatchReturned", dispatched) + "\r\n"); } catch {}
-
+  // stderr write intentionally ignored — may be unavailable
+  process.stderr.write(t("winSvcDispatchReturned", dispatched) + "\r\n");
   if (dispatched === 0) {
-    process.stderr.write(t("winSvcNotScm") + "\n");
+  process.stderr.write(t("winSvcNotScm") + "\n");
     await onStart();
     return;
   }

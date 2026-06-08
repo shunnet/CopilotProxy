@@ -29,8 +29,9 @@ public static partial class CmdHandle
     /// <param name="onProcessStarted">进程启动后的回调，用于上层跟踪进程引用</param>
     /// <param name="extraArgs">传递给脚本的额外命令行参数</param>
     /// <param name="env">额外的环境变量字典</param>
+    /// <param name="onExit">进程退出回调，参数为退出码</param>
     /// <returns>脚本退出码，0 表示成功</returns>
-    public static async Task<int> RunAsync(string scriptPath, Action<string> onOutput, CancellationToken cancellationToken = default, Action<Process>? onProcessStarted = null, string? extraArgs = null, Dictionary<string, string>? env = null)
+    public static async Task<int> RunAsync(string scriptPath, Action<string> onOutput, CancellationToken cancellationToken = default, Action<Process>? onProcessStarted = null, string? extraArgs = null, Dictionary<string, string>? env = null, Action<int>? onExit = null)
     {
         if (!File.Exists(scriptPath))
         {
@@ -80,6 +81,9 @@ public static partial class CmdHandle
 
         await Task.WhenAll(stdoutTask, stderrTask);
         await process.WaitForExitAsync(ct);
+
+        if (process.ExitCode != 0 && !ct.IsCancellationRequested)
+            onExit?.Invoke(process.ExitCode);
 
         return process.ExitCode;
     }

@@ -51,14 +51,14 @@ public static class EnvHandle
         model.RequestLog = GetBool(envMap, "REQUEST_LOG", true);
         model.Debug = GetBool(envMap, "DEBUG", false);
         model.CompressionLevel = GetString(envMap, "COMPRESSION_LEVEL", "off");
-        model.ConcurrencyThinking = GetInt(envMap, "CONCURRENCY_THINKING", 1);
-        model.ConcurrencyStandard = GetInt(envMap, "CONCURRENCY_STANDARD", 3);
+        model.ConcurrencyThinking = GetInt(envMap, "CONCURRENCY_THINKING", 5);
+        model.ConcurrencyStandard = GetInt(envMap, "CONCURRENCY_STANDARD", 15);
         model.RetryMax = GetInt(envMap, "RETRY_MAX", 3);
         model.TruncateToolOutput = GetBool(envMap, "TRUNCATE_TOOL_OUTPUT", true);
-        model.ThinkingTimeoutMs = GetInt(envMap, "THINKING_TIMEOUT_MS", 120000);
-        model.RequestTimeoutMs = GetInt(envMap, "REQUEST_TIMEOUT_MS", 120000);
-        model.DefaultContextLength = GetInt(envMap, "DEFAULT_CONTEXT_LENGTH", 131072);
-        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", null);
+        model.ThinkingTimeoutMs = GetInt(envMap, "THINKING_TIMEOUT_MS", 300000);
+        model.RequestTimeoutMs = GetInt(envMap, "REQUEST_TIMEOUT_MS", 300000);
+        model.DefaultContextLength = GetInt(envMap, "DEFAULT_CONTEXT_LENGTH", 262144);
+        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", 0.5);
         model.SessionKeepaliveEnabled = GetBool(envMap, "SESSION_KEEPALIVE_ENABLED", true);
         model.SessionKeepaliveIntervalMs = GetInt(envMap, "SESSION_KEEPALIVE_INTERVAL_MS", 120000);
         model.SessionKeepaliveIdleTimeoutMs = GetInt(envMap, "SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", 600000);
@@ -66,8 +66,12 @@ public static class EnvHandle
         model.ServerHost = GetString(envMap, "SERVER_HOST", "127.0.0.1");
         model.MaxToolOutputChars = GetInt(envMap, "MAX_TOOL_OUTPUT_CHARS", 12000);
         model.SnetLanguage = GetString(envMap, "SNET_LANGUAGE", "zh");
-        model.PassthroughBaseUrl = GetString(envMap, "PASSTHROUGH_BASE_URL", "");
-        model.TerminalFallbackEnabled = GetBool(envMap, "TERMINAL_FALLBACK_ENABLED", false);
+        model.ForceAllCapabilities = GetBool(envMap, "FORCE_ALL_CAPABILITIES", true);
+        model.MessagesPaging = GetInt(envMap, "MESSAGES_PAGING", 0);
+        model.RetryBaseDelayMs = GetInt(envMap, "RETRY_BASE_DELAY_MS", 100);
+        model.MaxRequestBodyBytes = GetInt(envMap, "MAX_REQUEST_BODY_BYTES", 67108864);
+        model.ToolOutputHeadChars = GetInt(envMap, "TOOL_OUTPUT_HEAD_CHARS", 6000);
+        model.ToolOutputTailChars = GetInt(envMap, "TOOL_OUTPUT_TAIL_CHARS", 2000);
 
         return model;
     }
@@ -95,15 +99,17 @@ public static class EnvHandle
         var lines = new List<string>
         {
             "# ============================================================",
-            "#  Snet Copilot Proxy — .env Configuration",
-            "#  所有配置均设有默认值，按需修改即可。",
-            "#  All settings have defaults. Only change what you need.",
+            "#  Snet Copilot Proxy — Configuration",
+            "#  所有配置均设有合理默认值，按需修改即可。",
+            "#  All settings have sensible defaults. Only change what you need.",
             "# ============================================================",
             "",
-            "# --- Server ---",
-            !string.IsNullOrEmpty(model.ServerHost) && model.ServerHost != "127.0.0.1" ? $"SERVER_HOST={model.ServerHost}" : "# SERVER_HOST=127.0.0.1",
-            $"SERVER_PORT={model.ServerPort}",
+            "# --- Model Selection ---",
             $"DEFAULT_MODEL={model.DefaultModel}",
+            "",
+            "# --- Server ---",
+            $"SERVER_HOST={model.ServerHost}",
+            $"SERVER_PORT={model.ServerPort}",
             "",
             "# --- DeepSeek API ---",
             $"DEEPSEEK_BASE_URL={model.DeepSeekBaseUrl}",
@@ -115,33 +121,28 @@ public static class EnvHandle
             "",
             "# --- Logging ---",
             $"REQUEST_LOG={model.RequestLog.ToString().ToLower()}",
-            model.Debug ? "DEBUG=true" : "# DEBUG=false",
+            $"DEBUG={model.Debug.ToString().ToLower()}",
             "",
-            "# --- Compression (off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard) ---",
+            "# --- Compression (off/lite/caveman/rtk/ultra/delta/stacked/aggressive/standard) ---",
             $"COMPRESSION_LEVEL={model.CompressionLevel}",
             "",
-            "# --- Concurrency & Rate Limiting ---",
+            "# --- Concurrency ---",
             $"CONCURRENCY_THINKING={model.ConcurrencyThinking}",
             $"CONCURRENCY_STANDARD={model.ConcurrencyStandard}",
             $"RETRY_MAX={model.RetryMax}",
             $"THINKING_TIMEOUT_MS={model.ThinkingTimeoutMs}",
             $"REQUEST_TIMEOUT_MS={model.RequestTimeoutMs}",
-            "# MAX_REQUEST_BODY_BYTES=67108864",
             "",
             "# --- Tool Output ---",
             $"TRUNCATE_TOOL_OUTPUT={model.TruncateToolOutput.ToString().ToLower()}",
             $"MAX_TOOL_OUTPUT_CHARS={model.MaxToolOutputChars}",
-            "# TOOL_OUTPUT_HEAD_CHARS=6000",
-            "# TOOL_OUTPUT_TAIL_CHARS=2000",
-            "# TOOL_OUTPUT_KEEP_COUNT=3",
             "",
             "# --- Context ---",
             $"DEFAULT_CONTEXT_LENGTH={model.DefaultContextLength}",
             "# MESSAGES_PAGING=0",
             "",
             "# --- Model Capabilities ---",
-            "# FORCE_ALL_CAPABILITIES=true",
-            model.DefaultTemperature.HasValue ? $"DEFAULT_TEMPERATURE={model.DefaultTemperature}" : "# DEFAULT_TEMPERATURE=",
+            $"DEFAULT_TEMPERATURE={model.DefaultTemperature}",
             "",
             "# --- Session Keepalive ---",
             $"SESSION_KEEPALIVE_ENABLED={model.SessionKeepaliveEnabled.ToString().ToLower()}",
@@ -152,15 +153,17 @@ public static class EnvHandle
             "# --- Language (zh / en) ---",
             $"SNET_LANGUAGE={model.SnetLanguage}",
             "",
-            "# --- Passthrough Proxy ---",
-            !string.IsNullOrEmpty(model.PassthroughBaseUrl) ? $"PASSTHROUGH_BASE_URL={model.PassthroughBaseUrl}" : "# PASSTHROUGH_BASE_URL=",
-            "# PASSTHROUGH_PREFIXES=/v1",
-            "# PASSTHROUGH_TIMEOUT_MS=30000",
+            "# --- Advanced (JS-side config, not exposed in WPF UI) ---",
+            $"FORCE_ALL_CAPABILITIES={model.ForceAllCapabilities.ToString().ToLower()}",
+            $"MESSAGES_PAGING={model.MessagesPaging}",
+            $"RETRY_BASE_DELAY_MS={model.RetryBaseDelayMs}",
+            $"MAX_REQUEST_BODY_BYTES={model.MaxRequestBodyBytes}",
+            $"TOOL_OUTPUT_HEAD_CHARS={model.ToolOutputHeadChars}",
+            $"TOOL_OUTPUT_TAIL_CHARS={model.ToolOutputTailChars}",
             "",
-            "# --- Security ---",
-            model.TerminalFallbackEnabled ? "TERMINAL_FALLBACK_ENABLED=true" : "# TERMINAL_FALLBACK_ENABLED=false",
-            "",
+            // Preserve any extra keys that aren't part of the model
         };
+        lines.AddRange(model.ExtraKeys.Select(kv => $"{kv.Key}={kv.Value}"));
 
         File.WriteAllText(path, string.Join("\n", lines));
     }

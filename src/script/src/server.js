@@ -1,6 +1,6 @@
 ﻿import "./polyfill.js";
-const _isDebug = () => { const v = Bun.env.DEBUG; return v === "1" || v === "true" || v === "yes"; };
-if (_isDebug()) try { process.stderr.write(`[Snet] startup pid=${process.pid} argv=${JSON.stringify(process.argv)}\r\n`); } catch {}
+const _isDebug = () => { const v = process.env.DEBUG; return v === "1" || v === "true" || v === "yes"; };
+if (_isDebug()) try { process.stderr.write(`[Snet] startup pid=${process.pid} argv=${JSON.stringify(process.argv)}\r\n`); } catch (e) { /* stderr may not be available early */ }
 
 // 1b. Crypto polyfill (Node.js < 19)
 if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
@@ -31,30 +31,29 @@ if (typeof fetch === 'undefined') {
 
 // 2b. Stream polyfills (Node.js < 18)
 if (typeof TransformStream === 'undefined') {
-  try { const { TransformStream: TS } = await import("node:stream/web"); globalThis.TransformStream = TS; } catch {}
+  try { const { TransformStream: TS } = await import("node:stream/web"); globalThis.TransformStream = TS; } catch (e) { /* TransformStream not available */ }
 }
 if (typeof ReadableStream === 'undefined') {
-  try { const { ReadableStream: RS } = await import("node:stream/web"); globalThis.ReadableStream = RS; } catch {}
+  try { const { ReadableStream: RS } = await import("node:stream/web"); globalThis.ReadableStream = RS; } catch (e) { /* ReadableStream not available */ }
 }
 
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { config, getModels, initModels, resolveModel, resolveModelMetadata, isKnownModel, chatCompletion, APIError, isSeparator, isDeepSeekModel, isMiMoModel, SEP_DEEPSEEK, SEP_MIMO, refreshModels, bgFetchDone, fetchWithAgent, getThinkingModes, parseThinkingMode } from "./snet-handle.js";
+import { config, getModels, initModels, resolveModel, resolveModelMetadata, isKnownModel, chatCompletion, APIError, isSeparator, isDeepSeekModel, isMiMoModel, SEP_DEEPSEEK, SEP_MIMO, refreshModels, bgFetchDone, getThinkingModes, parseThinkingMode } from "./snet-handle.js";
 
 import { ModelConcurrencyManager, RateLimitError, truncateToolMessagesInPayload, checkRequestBodySize } from "./concurrency.js";
 import { compactIdentity, compactToolInstructions, compactOllamaToolInstructions, compactCodeCompletionPrompt } from "./token-optimizer.js";
 import { trackSession, shutdown as keepaliveShutdown, stats as keepaliveStats } from "./session-keepalive.js";
 import { handleServiceCommand, runAsService } from "./win-service.js";
-import { log, error as logErr, debug, reqLog, enableDashboard, disableDashboard, onCommand, collapseBanner, expandBanner, redrawBanner, setBoxWidth } from "./logger.js";
+import { log, error as logErr, debug, enableDashboard, disableDashboard, onCommand, collapseBanner, redrawBanner, setBoxWidth, setPlainMode } from "./logger.js";
 import { isDeepSeekAvailable } from "./deepseek-client.js";
 import { isMiMoAvailable } from "./mimo-client.js";
 import { t, setLanguage, getLanguage } from "./i18n.js";
-import { applyToolDefaults, normalizeToolType } from "./tool-schemas.js";
-import { _stripOrphanedToolCalls, _toolNames, _stripAllToolCalls, checkOrphanToolMessage, validateMessages, mergeConsecutiveMessages } from "./message-pipeline.js";
-import { extractToolCalls, normalizeToolCall, getWorkspaceRoot, extractVSContext, hasXMLToolCalls } from "./tool-extractor.js";
-import { createReasoningContext, _assistantNeedsReasoning, _crossReqReasoningCache, clearConvReasoning } from "./reasoning-cache.js";
-import { _sessionRegistry, _workspaceSessions, _workspaceSummaries, _taskCompletedSessions, _recentlyCompleted, _rateLimitedSessions, _sessionCounter, _summarizeCompletedTask, setSessionCounter, sessionLog } from "./session-tracker.js";
-import { _simStream, _foldReasoningIntoContent, addReasoningAliases, reconstructToolCalls, createXMLAwareStreamAccumulator } from "./stream-handler.js";
+import { _stripOrphanedToolCalls, _toolNames, _stripAllToolCalls, checkOrphanToolMessage } from "./message-pipeline.js";
+import { extractToolCalls, normalizeToolCall, getWorkspaceRoot, hasXMLToolCalls } from "./tool-extractor.js";
+import { createReasoningContext, _assistantNeedsReasoning, _crossReqReasoningCache } from "./reasoning-cache.js";
+import { _sessionRegistry, _workspaceSessions, _workspaceSummaries, _taskCompletedSessions, _recentlyCompleted, _rateLimitedSessions, _summarizeCompletedTask } from "./session-tracker.js";
+import { _simStream, _foldReasoningIntoContent, addReasoningAliases, reconstructToolCalls } from "./stream-handler.js";
 import { embedReasoning, extractReplayedReasoning } from "./reasoning-replay.js";
 
 // ── Service command routing (early exit for install/uninstall) ──
@@ -65,7 +64,8 @@ import { embedReasoning, extractReplayedReasoning } from "./reasoning-replay.js"
 
 // ── Service mode detection ──
 const _isServiceMode = process.argv.includes("--service") || process.env.SNET_SERVICE === "1";
-const _isPlainMode = process.argv.includes("--plain") || Bun.env.SNET_PLAIN === "1";
+const _isPlainMode = process.argv.includes("--plain") || process.env.SNET_PLAIN === "1";
+if (_isPlainMode) setPlainMode(true);
 
 // 构建日期文件（由构建脚本写入）
 const VERSION_FILE = ".version";
@@ -88,7 +88,7 @@ const logReq = (c) => {
 const err = (msg) => logErr(msg);
 
 // Auto-create .env if missing
-(async () => {
+await (async () => {
   try {
     const fs = await import("node:fs");
     if (!fs.existsSync(".env")) {
@@ -100,79 +100,94 @@ const err = (msg) => logErr(msg);
 # ============================================================
 
 # --- Model Selection ---
-# DEFAULT_MODEL=ds/deepseek-v4-pro
+DEFAULT_MODEL=ds/deepseek-v4-pro
 
 # --- Server ---
-# SERVER_HOST=127.0.0.1
-# SERVER_PORT=11434
+SERVER_HOST=127.0.0.1
+SERVER_PORT=11434
 
 # --- DeepSeek API ---
-# DEEPSEEK_BASE_URL=https://api.deepseek.com
-# DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_API_KEY=
 
 # --- MiMo API ---
-# MIMO_BASE_URL=https://api.xiaomimimo.com/v1
-# MIMO_API_KEY=
+MIMO_BASE_URL=https://api.xiaomimimo.com/v1
+MIMO_API_KEY=
 
 # --- Logging ---
-# REQUEST_LOG=true
-# DEBUG=false              # set to "true" or "1" to enable debug output
+REQUEST_LOG=true
+DEBUG=false
 
-# --- Compression (off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard) ---
-# COMPRESSION_LEVEL=off
+# --- Compression (off/lite/caveman/rtk/ultra/delta/stacked/aggressive/standard) ---
+COMPRESSION_LEVEL=off
 
-# --- Concurrency & Rate Limiting ---
-# CONCURRENCY_THINKING=5
-# CONCURRENCY_STANDARD=15
-# RETRY_MAX=3
-# RETRY_BASE_DELAY_MS=100
-# THINKING_TIMEOUT_MS=300000
-# REQUEST_TIMEOUT_MS=300000
-# MAX_REQUEST_BODY_BYTES=67108864
+# --- Concurrency ---
+CONCURRENCY_THINKING=5
+CONCURRENCY_STANDARD=15
+RETRY_MAX=3
+THINKING_TIMEOUT_MS=300000
+REQUEST_TIMEOUT_MS=300000
 
-# --- Tool Output Truncation ---
-# TRUNCATE_TOOL_OUTPUT=true
-# MAX_TOOL_OUTPUT_CHARS=12000
-# TOOL_OUTPUT_HEAD_CHARS=6000
-# TOOL_OUTPUT_TAIL_CHARS=2000
-# TOOL_OUTPUT_KEEP_COUNT=3
-
-# --- Context & Messages ---
-# DEFAULT_CONTEXT_LENGTH=131072
-# MESSAGES_PAGING=0       # set >0 to keep only last N messages per request
-
-# --- Model Capabilities ---
-# FORCE_ALL_CAPABILITIES=true
-# DEFAULT_TEMPERATURE=     # leave empty to use model default
+# --- Context & Tool Output ---
+DEFAULT_CONTEXT_LENGTH=262144
+DEFAULT_TEMPERATURE=0.5
+MAX_TOOL_OUTPUT_CHARS=12000
+MESSAGES_PAGING=0
 
 # --- Session Keepalive ---
-# SESSION_KEEPALIVE_ENABLED=true
-# SESSION_KEEPALIVE_INTERVAL_MS=120000
-# SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=600000
-# SESSION_KEEPALIVE_MAX_LIFETIME_MS=86400000
+SESSION_KEEPALIVE_ENABLED=true
+SESSION_KEEPALIVE_INTERVAL_MS=120000
+SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=600000
+SESSION_KEEPALIVE_MAX_LIFETIME_MS=86400000
 
-# --- Language (zh / en) ---
-# SNET_LANGUAGE=zh
-
-# --- Passthrough Proxy (forward unmatched paths to upstream) ---
-# PASSTHROUGH_BASE_URL=    # e.g. https://your-upstream-api.com
-# PASSTHROUGH_PREFIXES=/v1
-# PASSTHROUGH_TIMEOUT_MS=30000
-
-# --- Terminal Fallback (⚠️ enable only if you trust the AI client) ---
-# TERMINAL_FALLBACK_ENABLED=false
+# --- Language ---
+SNET_LANGUAGE=zh
 `);
       log(t("creatingEnv"));
     }
-  } catch (e) { debug(`[startup] .env create failed: ${e.message?.slice(0, 80)}`); }
+  } catch (e) { /* intentionally ignored */ }
 })();
+
+// ── Load .env into process.env (Node.js doesn't auto-load .env like Bun) ──
+{
+  try {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const cwd = process.cwd();
+
+    // Search for .env: parent (source dir) first, then cwd (build dir)
+    const parentEnv = path.resolve(cwd, "..", ".env");
+    const candidates = [parentEnv, ".env"];
+
+    for (const envFile of candidates) {
+      if (!fs.existsSync(envFile)) continue;
+      const rawBuf = fs.readFileSync(envFile);
+      const envContent = rawBuf[0] === 0xEF && rawBuf[1] === 0xBB && rawBuf[2] === 0xBF
+        ? rawBuf.toString("utf8", 3) : rawBuf.toString("utf8");
+      let loaded = 0;
+      for (const line of envContent.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx < 1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (!val) continue;
+        process.env[key] = val;
+        loaded++;
+      }
+      if (loaded > 0) break;
+    }
+    globalThis.Bun = { env: { ...process.env } };
+  } catch (e) { /* intentionally ignored */ }
+}
 
 // No API key needed — free tier works without
 
 const app = new Hono();
-// NOTE: _stripAllToolCalls, _stripOrphanedToolCalls, _toolNames, addReasoningAliases,
-// _foldReasoningIntoContent, _simStream are now imported from extracted modules above.
-
 // ── 辅助函数 ──
 
 const callId = () => `call_${crypto.randomUUID().slice(0, 8)}`;
@@ -180,9 +195,9 @@ const callId = () => `call_${crypto.randomUUID().slice(0, 8)}`;
 const apiErr = (e) => {
   const status = e instanceof APIError ? e.status : 500;
   const code = status === 401 ? "invalid_api_key" : status === 429 ? "rate_limit_exceeded" : status === 404 ? "model_not_found" : status === 504 ? "gateway_timeout" : "server_error";
-  const type = status === 401 ? "invalid_request_error" : status >= 500 ? "server_error" : "invalid_request_error";
+  const type = status === 401 ? "invalid_request_error" : status === 429 ? "rate_limit_error" : status >= 500 ? "server_error" : "invalid_request_error";
   const param = status === 404 ? "model" : null;
-  return { status, body: { error: { message: e.message, type, code, ...(param ? { param } : {}) } } };
+  return { status, body: { error: { message: "Internal server error", type, code, ...(param ? { param } : {}) } } };
 };
 
 async function getBody(c) {
@@ -190,13 +205,9 @@ async function getBody(c) {
     const text = await c.req.text();
     return text ? JSON.parse(text) : {};
   } catch (e) {
-    // M7: Log parse failures instead of silently returning {}
-    debug(`[body] parse error: ${e.message?.slice(0, 100)}`);
-    return {};
+      throw new Error("Invalid request body: " + e.message);
   }
 }
-
-// NOTE: _stripOrphanedToolCalls is now imported from message-pipeline.js
 
 // ── Shared display helpers (H23: extracted from duplicate inline definitions) ──
 const SHORT_TAG = { LOW: "LO", MEDIUM: "MD", HIGH: "HI", MAXIMUM: "MX", XHIGH: "X" };
@@ -272,13 +283,13 @@ const isSqlStudio = (c) => {
 };
 
 function resolveClient(c) {
-  const envClient = Bun.env.DEFAULT_CLIENT || "";
+  const envClient = process.env.DEFAULT_CLIENT || "";
   if (envClient && ["vscode","vs","vsi","sql"].includes(envClient)) return envClient;
   if (isVSCode(c)) return "vscode";
   if (isVSInsiders(c)) return "vsi";
   if (isVS2026(c)) return "vs";
   if (isSqlStudio(c)) return "sql";
-  return Bun.env.DEFAULT_CLIENT || "vscode"; // fallback or env default
+  return process.env.DEFAULT_CLIENT || "vscode"; // fallback or env default
 }
 
 // ── Parameter normalization (camelCase → snake_case) ──
@@ -313,16 +324,8 @@ function processThinkTags(text) {
   };
 }
 
-// NOTE: addReasoningAlias, _foldReasoningIntoContent, _simStream are now imported from stream-handler.js
-// NOTE: _crossReqReasoningCache, createReasoningContext, _assistantNeedsReasoning imported from reasoning-cache.js
-// NOTE: _sessionRegistry, _workspaceSessions, _workspaceSummaries, _taskCompletedSessions, _recentlyCompleted, _rateLimitedSessions, _sessionCounter imported from session-tracker.js
-// NOTE: _stripOrphanedToolCalls, _toolNames, _stripAllToolCalls, checkOrphanToolMessage imported from message-pipeline.js
-// NOTE: extractToolCalls, normalizeToolCall, getWorkspaceRoot, extractVSContext, _fixPathEscapes imported from tool-extractor.js
-
+const VALID_ROLES = new Set(["system", "user", "assistant", "tool"]);
 const _displayReasoning = (process.env.DISPLAY_REASONING || "false").toLowerCase() === "true";
-let _tool400Streak = 0;
-// skills removed
-const _skillsMatched = new Map(); // sessionKey → [skillNames], avoids re-matching per request
 const _collapsibleReasoning = (process.env.COLLAPSIBLE_REASONING || "true").toLowerCase() !== "false";
 const _THINKING_BLOCK_START = _collapsibleReasoning ? "<details>\n<summary>snet Thinking</summary>\n\n" : "<!-- snet-thinking -->\n";
 const _THINKING_BLOCK_END = _collapsibleReasoning ? "\n</details>\n\n" : "\n<!-- /snet-thinking -->\n\n";
@@ -336,8 +339,9 @@ function _stripDisplayedThinking(content) {
   if (typeof content !== "string") return content;
   // Safety: if regex fails on malformed input (no closing tag), fall back to indexOf-based strip
   try {
-    return content.replace(_THINKING_STRIP_RE, "").trimStart();
-  } catch {
+    const safeContent = typeof content === "string" ? content.slice(0, 50000) : content;
+    return safeContent.replace(_THINKING_STRIP_RE, "").trimStart();
+  } catch (e) { /* intentionally ignored */
     // Fallback: manual strip for malformed thinking blocks
     let result = content;
     const startTag = /<details\b[^>]*>\s*<summary\b[^>]*>\s*snet Thinking\s*<\/summary>/gi;
@@ -360,69 +364,30 @@ function _stripDisplayedThinking(content) {
   }
 }
 
-// NOTE: All helper functions below (sanitizeContent, processThinkTags, oaiResp, apiErr, etc.)
-// are kept in server.js. The extracted modules (message-pipeline.js, tool-extractor.js,
-// reasoning-cache.js, session-tracker.js, stream-handler.js) contain the shared logic.
-// The duplicate inline definitions that were previously here (lines 278-mid) have been
-// replaced with imports from those modules at the top of this file.
-
 // 定期清理过期会话条目（24 小时 TTL），防止长期运行的服务器内存泄漏
+// NOTE: session-tracker.js also maintains its own cleanup — this one covers server.js registries
 const _SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 setInterval(() => {
   const cutoff = Date.now() - _SESSION_MAX_AGE_MS;
-  for (const [k, v] of _sessionRegistry) {
-    if (new Date(v.createdAt).getTime() < cutoff) _sessionRegistry.delete(k);
-  }
-  for (const [k, v] of _workspaceSessions) {
-    if (new Date(v.lastSeen).getTime() < cutoff) _workspaceSessions.delete(k);
-  }
-  for (const [k, v] of _workspaceSummaries) {
-    if (new Date(v.timestamp).getTime() < cutoff) _workspaceSummaries.delete(k);
-  }
   for (const [k, v] of _recentlyCompleted) {
     if (v < cutoff) _recentlyCompleted.delete(k);
   }
   for (const [k, v] of _rateLimitedSessions) {
     if (v.at < cutoff) _rateLimitedSessions.delete(k);
   }
-  // Clean up stale skill match cache entries
-  for (const k of _skillsMatched.keys()) {
-    // Remove entries not seen recently (no associated session registry entry)
-    if (!_sessionRegistry.has(k) && !_workspaceSessions.has(k)) _skillsMatched.delete(k);
-  }
-  // Hard cap at 5000 to prevent unbounded growth
-  if (_skillsMatched.size > 5000) {
-    const extra = _skillsMatched.size - 1000;
-    const keys = [..._skillsMatched.keys()].slice(0, extra);
-    for (const k of keys) _skillsMatched.delete(k);
-  }
 }, 10 * 60 * 1000).unref();
 
-// NOTE: _convId, _startPrompt, _sha256, _normalizeToolCallForSig, _toolCallSignature,
-// _toolCallIds, _toolCallNames, _messageSignature, _msgHash, _assistantNeedsReasoning,
-// createReasoningContext, _summarizeCompletedTask are now imported from reasoning-cache.js
-// and session-tracker.js. The old inline definitions below have been removed.
-
 // ── Ollama -> Go model mappings (what VS Copilot sends vs what Go API expects)
-const MODEL_MAP = {};
-
 function mapModel(name) {
   const parsed = parseThinkingMode(name);
   const raw = parsed.model.replace(/^\s*\[(?:DEEPSEEK|deepseek|MIMO|mimo)\]\s*/i, "").trim();
   let clean = raw.replace(/:latest$/i, "").split(":")[0].trim();
   const fullClean = raw.replace(/:latest$/i, "").trim();
-  const mapped = MODEL_MAP[clean] || MODEL_MAP[clean.toLowerCase()] || MODEL_MAP[fullClean] || MODEL_MAP[fullClean.toLowerCase()];
-  if (mapped) return mapped;
   // Try full name via resolveModel which handles display names with colons
   const resolved = resolveModel(fullClean);
   if (resolved && !resolved.unverified) return resolved.id;
   return resolveModel(clean).id;
 }
-
-// NOTE: getWorkspaceRoot, getActiveFile, getSelectedCode, extractVSContext,
-// _fixPathEscapes, normalizeToolCall, extractToolCalls are now imported from tool-extractor.js.
-// _injectProjectUpdate was a no-op and has been removed.
-// _normLog was only used by the above functions and has been removed.
 
 const _schemaSeen = new Set();
 function _dumpToolSchemas(tools) {
@@ -491,7 +456,7 @@ app.get("/health", async c => {
   } catch (e) {
     return c.json({
       status: "unhealthy",
-      reason: `Health check failed: ${e.message}`,
+      reason: "Health check failed: internal server error",
     });
   }
 });
@@ -502,11 +467,11 @@ app.post("/api/language", async c => {
     const body = await c.req.json();
     if (body && (body.language === "zh" || body.language === "en")) {
       setLanguage(body.language);
-      log(t("i18nSet"));
+      log(t("i18nSet", body.language));
       return c.json({ ok: true, language: getLanguage() });
     }
     return c.json({ ok: false, error: "invalid language" }, 400);
-  } catch {
+  } catch (e) { /* intentionally ignored */
     return c.json({ ok: false, error: "invalid request" }, 400);
   }
 });
@@ -855,11 +820,11 @@ app.post("/api/diagnostics", async c => {
       diagnostics.tool_calling.error = "No tool calls detected — check model capabilities";
     }
   } catch (e) {
-    diagnostics.connectivity = { status: "failed", latency_ms: 0, error: e.message };
+    diagnostics.connectivity = { status: "failed", latency_ms: 0, error: "Upstream API connection failed" };
     diagnostics.streaming = { status: "skipped", chunks: 0, error: "connectivity failed" };
     diagnostics.tool_calling = { status: "skipped", tool_calls: 0, error: "connectivity failed" };
     results.status = "failed";
-    results.error = e.message;
+    results.error = "Upstream API request failed";
   }
 
   results.diagnostics = diagnostics;
@@ -974,7 +939,7 @@ app.post("/v1/chat/completions", async c => {
   const model = modelParse.model;
   const thinkingTag = modelParse.thinking;
   const messages = body.messages || [];
-  const clientWantsStream = body.stream === true;
+  const clientWantsStream = body.stream === true || body.stream === "true";
   const vsc = isVSCode(c);
   const vs2026 = isVS2026(c);
   const vsInsiders = isVSInsiders(c);
@@ -1002,6 +967,7 @@ app.post("/v1/chat/completions", async c => {
   const vsTools = body.tools;
   _dumpToolSchemas(vsTools);
   const startTime = Date.now();
+  let tool400Streak = 0;
   const chatId = `chatcmpl-${startTime}`;
   const created = ~~(startTime / 1000);
 
@@ -1010,7 +976,6 @@ app.post("/v1/chat/completions", async c => {
   if (!messages.length) return c.json({ error: { message: "messages is required and must be non-empty", type: "invalid_request_error", code: "missing_messages" } }, 400);
 
   // ── Per-message validation (copilot-proxy pattern) ──
-  const VALID_ROLES = new Set(["system", "user", "assistant", "tool"]);
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (!m || typeof m !== "object") {
@@ -1044,16 +1009,6 @@ app.post("/v1/chat/completions", async c => {
     }
   }
   // Flood guard: if think-fallback streak persists across too many requests, 503
-  if (false) {
-    reasoningCtx.sessionEntry.stopCount = (reasoningCtx.sessionEntry.stopCount || 0) + 1;
-    if (reasoningCtx.sessionEntry.stopCount >= 5) {
-      reasoningCtx.seslog(`\x1b[31m[think-fallback] flood ${reasoningCtx.sessionEntry.stopCount} stops — returning 503\x1b[0m`);
-      return c.json({ error: { message: "Service temporarily unavailable", type: "server_error", code: "rate_limit_exceeded" } }, 503);
-    }
-    // Allow request to proceed — taskCompleteOnly will be set downstream
-  } else {
-    reasoningCtx.sessionEntry.stopCount = 0;
-  }
 
   // Rate-limit gate: if this session already hit a 429 recently, return 429
   // immediately so VS stops retrying.
@@ -1145,81 +1100,6 @@ app.post("/v1/chat/completions", async c => {
         const orphanCheck = checkOrphanToolMessage(userMsgs, m, clientTag);
         if (orphanCheck.drop) continue;
         let tc = typeof m.content === "string" ? m.content : JSON.stringify(m.content || "");
-        // Terminal fallback: execute commands server-side when VS terminal is unavailable
-        // CR-1: Explicit opt-in via TERMINAL_FALLBACK_ENABLED=true env var (default: disabled)
-        if (config.terminalFallback === true && /Failed to find a valid Visual Studio terminal/i.test(tc)) {
-          const callId = m.tool_call_id;
-          const lastMsg = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1] : null;
-          if (lastMsg?.role === "assistant" && lastMsg?.tool_calls) {
-            const matchingCall = lastMsg.tool_calls.find(c => c.id === callId && /^(run_command_in_terminal|execute_command)$/i.test(c.function?.name));
-            if (matchingCall) {
-              try {
-                const callArgs = typeof matchingCall.function.arguments === "string" ?
-                  JSON.parse(matchingCall.function.arguments) : (matchingCall.function.arguments || {});
-                const cmdRaw = String(callArgs.command || callArgs.cmd || "");
-                let cmd = cmdRaw;
-                if (cmd) {
-                  // Auto-fix: replace pwsh with powershell (pwsh/PS Core may not be installed)
-                  cmd = cmd.replace(/^pwsh(\.exe)?(\s+-)/i, "powershell$2");
-                  // CR-1: Strict allowlist — only truly read-only inspection commands.
-                  // Commands that can execute arbitrary code (node, python, go, etc.) are
-                  // intentionally excluded. Use the VS terminal for write operations.
-                  const SAFE_CMD_RE = /^(dir|ls|echo|type|cat|head|tail|find|findstr|where|which|git\s+(status|log|diff|show|branch|tag|stash\s+list|remote\s+-v|rev-parse|config\s+--get)|dotnet\s+(--list|--info|--version)|pwsh\s+-Command\s+(Get-ChildItem|Get-Content|Get-Location|Select-String|Test-Path|Write-Output)|powershell\s+-Command\s+(Get-ChildItem|Get-Content|Get-Location|Select-String|Test-Path|Write-Output))/i;
-                  // Block any command containing potentially dangerous patterns
-                  const DANGEROUS_RE = /\b(rmdir\s+\/[sq]\s+\/|del\s+\/[fsq]\s+|format\s+[a-z]:|Remove-Item\s+-Recurse\s+-Force|reg\s+(delete|add)|rm\s+-rf|>\/dev\/|\|.+shutdown|sc\s+(stop|delete)|&\s*\{|Invoke-Expression|Invoke-WebRequest|Invoke-RestMethod|Start-Process|New-Object\s+Net\.|iex\s|`[^`]*`)/i;
-                  if (DANGEROUS_RE.test(cmd)) {
-                    log(`[term] BLOCKED dangerous cmd: ${cmd.slice(0, 80)}`);
-                    tc = `Command blocked for safety: ${cmd.slice(0, 150)}`;
-                    userMsgs.push({ role: "tool", tool_call_id: m.tool_call_id || "unknown", content: tc });
-                    continue;
-                  }
-                  if (!SAFE_CMD_RE.test(cmd)) {
-                    log(`[term] BLOCKED non-allowlisted cmd: ${cmd.slice(0, 80)}`);
-                    tc = `Command blocked (not in safe command allowlist). Only read-only inspection commands are permitted: ${cmd.slice(0, 150)}`;
-                    userMsgs.push({ role: "tool", tool_call_id: m.tool_call_id || "unknown", content: tc });
-                    continue;
-                  }
-                  const cwd = callArgs.cwd || process.cwd();
-                  const { execFile } = await import("node:child_process");
-                  log(`[term] proxy-exec: ${cmd}`);
-                  // Use execFile with explicit shell to avoid injection
-                  const encoded = Buffer.from(cmd, "utf16le").toString("base64");
-                  let result, exitCode;
-                  try {
-                    const outcome = await new Promise((resolve, reject) => {
-                      execFile("powershell", ["-NoProfile", "-EncodedCommand", encoded], {
-                        encoding: "utf8",
-                        timeout: 60000,
-                        cwd,
-                        maxBuffer: 1024 * 1024,
-                        windowsHide: true,
-                      }, (error, stdout, stderr) => {
-                        if (error) {
-                          resolve({ text: ((stdout || "") + (stderr || "")).trim(), code: error.code || 1 });
-                        } else {
-                          resolve({ text: (stdout || "").trim(), code: 0 });
-                        }
-                      });
-                    });
-                    result = outcome.text;
-                    exitCode = outcome.code;
-                  } catch (execErr) {
-                    result = execErr.message;
-                    exitCode = 1;
-                  }
-                  // Truncate huge outputs so the AI can still parse the result
-                  const maxLen = 6000;
-                  if (result.length > maxLen) {
-                    result = result.slice(0, maxLen) + `\n\n[truncated ${result.length - maxLen} chars]`;
-                  }
-                  tc = `Command output (exit ${exitCode}):\n${result}`;
-                }
-              } catch (execErr) {
-                log(`[term] proxy-exec fail: ${execErr.message}`);
-              }
-            }
-          }
-        }
         if (toolLoopBroken) continue;
         try { const p2 = userMsgs[userMsgs.length-1]; if(p2&&p2.role==="assistant"&&p2.tool_calls){ const mt = p2.tool_calls.find(t=>t.id===m.tool_call_id); if(mt&&mt.function&&mt.function.name&&mt.function.name.includes("read")&&tc.length>10&&!tc.startsWith("[trunc")){ tc += " [Read more: use startLine+endLine to continue.]"; } } } catch(e){}
         if (/^(Error|Failed|Invalid|Timeout|\[Error\]|\[Fail\]|command not found|is not recognized|no such file)/i.test(tc.trim())) {
@@ -1323,75 +1203,9 @@ app.post("/v1/chat/completions", async c => {
       filterNags = true;
     }
 
-    // ── Autopilot stall detection ──
-    // VS sends bare "continue" when the user clicks continue in autopilot mode.
-    // If the LLM keeps responding with text-only (no tools) to repeated continues,
-    // it's stalled — cut the session.
-    let bareContinueCount = 0;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role !== "user") continue;
-      const t = typeof messages[i].content === "string" ? messages[i].content.trim().toLowerCase() : "";
-      if (t === "continue" || t === "proceed" || t === "go on" || t === "go ahead") {
-        bareContinueCount++;
-      } else {
-        break;
-      }
-    }
-    // Also count our replaced version — if LLM keeps getting "Continue with your current task"
-    // and responding with text-only, same stall pattern
-    let replacedContinueCount = 0;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role !== "user") continue;
-      const t = typeof messages[i].content === "string" ? messages[i].content.trim() : "";
-      if (/^continue with your current task/i.test(t)) {
-        replacedContinueCount++;
-      } else {
-        break;
-      }
-    }
-    const totalContinueCount = bareContinueCount + replacedContinueCount;
-    if (false) {
-      reasoningCtx.seslog(`\x1b[33m[LOOP-BREAK] autopilot stall — ${totalContinueCount} continues with no tool output — cutting session\x1b[0m`);
-      filterNags = true;
-    }
 
     // Identity override — MUST be first system instruction to override VS built-in
     systemMsg = compactIdentity(goModel, thinkingTag) + (systemMsg ? "\n\n" : "") + systemMsg;
-
-    // Inject available skills reference (compact name list for model awareness)
-    if (false) {
-      systemMsg += "\n\n## Available Skills\n";
-      systemMsg += "You have access to the following skill references. When a task matches a skill's domain, you can apply its patterns and best practices:\n";
-      systemMsg += _skillNames.join(", ") + "\n";
-      systemMsg += "Use relevant skill patterns to guide your approach.";
-    }
-
-    // Auto-match skills based on user's message content
-    // Cache per session to avoid re-matching on every tool call round
-    if (false) {
-      const sessionKey = reasoningCtx.conv || reasoningCtx.sessionEntry?.id;
-      if (sessionKey && !_skillsMatched.has(sessionKey)) {
-        const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
-        if (lastUserMsg?.content) {
-          const content = typeof lastUserMsg.content === "string" ? lastUserMsg.content : JSON.stringify(lastUserMsg.content);
-          const matched = matchSkills(_skillsCache, content);
-          if (matched.length > 0) {
-            _skillsMatched.set(sessionKey, matched);
-            const activationPrompt = buildSkillActivationPrompt(matched, _skillsCache, 3 /* top 3 only */);
-            if (activationPrompt) systemMsg += activationPrompt;
-          } else {
-            _skillsMatched.set(sessionKey, []); // mark as checked, even if no match
-          }
-        }
-      } else if (sessionKey && _skillsMatched.has(sessionKey)) {
-        // Already matched this session — inject same skills without re-scanning
-        const cached = _skillsMatched.get(sessionKey);
-        if (cached?.length > 0) {
-          const activationPrompt = buildSkillActivationPrompt(cached, _skillsCache, 3);
-          if (activationPrompt) systemMsg += activationPrompt;
-        }
-      }
-    }
 
     // Workspace continuity — if this is a new chat in a previously active workspace,
     // enrich the system prompt with a compact summary of the last completed task,
@@ -1418,34 +1232,6 @@ app.post("/v1/chat/completions", async c => {
     // and VS is nagging about task completion, short-circuit with task_complete
     // instead of forwarding the nag to the LLM. For real tasks with tools,
     // the last assistant would have tool_calls and this won't fire.
-    if (false) {
-      const hasToolActivity = messages.some(m =>
-        m.role === "assistant" && (
-          m.tool_calls?.length ||
-          /```tool\n\{|## `[^`]+`\n```/.test(typeof m.content === "string" ? m.content : "")
-        )
-      );
-      if (!hasToolActivity) {
-        const lastUM = userMsgs[userMsgs.length - 1];
-        const nagRe = /\byou have not yet marked the task as complete\b/i;
-        const isLastMsgNag = lastUM?.role === "user" && typeof lastUM.content === "string" && nagRe.test(lastUM.content);
-        if (isLastMsgNag) {
-          reasoningCtx.seslog(`\x1b[33m[autopilot] auto task_complete after text-only conversation (${vsTaskCompleteNags} nag(s))\x1b[0m`);
-          _recentlyCompleted.set(reasoningCtx.conv, Date.now());
-          const tc = [{ id: callId(), type: "function", function: { name: "task_complete", arguments: "{}" } }];
-          if (clientWantsStream) {
-            return stream(c, async s => {
-              const w = (o) => s.write(`data: ${JSON.stringify(o)}\n\n`);
-              const base = { id: chatId, object: "chat.completion.chunk", created, model, system_fingerprint: systemFp };
-              await w({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
-              await _simStream(w, base, true, tc, "", null);
-              await s.write("data: [DONE]\n\n");
-            });
-          }
-          return c.json(oaiResp(null, tc, "tool_calls", model));
-        }
-      }
-    }
 
     // DeepSeek/MiMo 兼容性清理（参考 Camel-Prince/deepseek-copilot-proxy）:
     // 1. 删除 reasoning 字段（DeepSeek 仅接受 reasoning_content）
@@ -1465,8 +1251,7 @@ app.post("/v1/chat/completions", async c => {
         mergedMsgs.push({ ...m });
       }
     }
-    userMsgs.length = 0;
-    userMsgs.push(...mergedMsgs);
+    userMsgs.splice(0, userMsgs.length, ...mergedMsgs);
 
     // Forward to Go API with native tool support
     const apiMessages = [];
@@ -1524,8 +1309,7 @@ app.post("/v1/chat/completions", async c => {
       if (nonSysMsgs.length > _paging) {
         const dropped = nonSysMsgs.length - _paging;
         const paged = [...sysMsgs, ...nonSysMsgs.slice(-_paging)];
-        apiMessages.length = 0;
-        apiMessages.push(...paged);
+        apiMessages.splice(0, apiMessages.length, ...paged);
         debug(`  ${reasoningCtx.sessionPrefix} [paging] kept ${_paging} messages (dropped ${dropped})`);
       }
     }
@@ -1716,13 +1500,6 @@ app.post("/v1/chat/completions", async c => {
         }
 
 
-        // Token usage logging for streaming path
-        if (streamUsage) {
-          log(t("tokenUsage", streamUsage.prompt_tokens, streamUsage.completion_tokens, streamUsage.total_tokens));
-        } else {
-          log(t("tokenNoData"));
-        }
-
         reasoningCtx.seslog(`stream done (${tokenCount} chunk${tokenCount !== 1 ? "s" : ""})`);
         } finally {
           release();
@@ -1746,7 +1523,7 @@ app.post("/v1/chat/completions", async c => {
         }
         return result;
       }, false);
-      _tool400Streak = 0;
+      tool400Streak = 0;
     } catch (e) {
       if (e.name === "RateLimitError") {
         _rateLimitedSessions.set(reasoningCtx.conv, { at: Date.now() });
@@ -1755,7 +1532,12 @@ app.post("/v1/chat/completions", async c => {
       }
       if (e instanceof APIError && e.status === 400 && /reasoning_content.*must be passed back/i.test(e.message)) {
         err(`  [reasoning] stripping thinking mode & retrying (reasoning_content missing in history)`);
-        const noThinkingReq = { ...nonStreamReq, stream: false };
+        const noThinkingReq = { ...nonStreamReq, stream: false, _noThinking: true,
+          messages: nonStreamReq.messages.map(m => {
+            if (m.reasoning_content !== undefined) { const { reasoning_content, ...rest } = m; return rest; }
+            return m;
+          })
+        };
         delete noThinkingReq.reasoning_effort;
         delete noThinkingReq.thinking;
         delete noThinkingReq.thinking_token_budget;
@@ -1775,7 +1557,7 @@ app.post("/v1/chat/completions", async c => {
             const bareMessages = nonStreamReq.messages.filter(m =>
               m.role === "system" || m.role === "user"
             );
-            const bareReq = { ...nonStreamReq, messages: bareMessages, stream: false };
+            const bareReq = { ...nonStreamReq, messages: bareMessages, stream: false, _noThinking: true };
             delete bareReq.reasoning_effort;
             delete bareReq.thinking;
             delete bareReq.thinking_token_budget;
@@ -1797,12 +1579,12 @@ app.post("/v1/chat/completions", async c => {
           }
         }
       } else if (e instanceof APIError && e.status === 400 && /tool|tool_call/i.test(e.message)) {
-        _tool400Streak++;
+        tool400Streak++;
         const tools = _toolNames(compressedMessages);
-        err(`  [400] tool error (#${_tool400Streak}/3): ${tools} — ${e.message}`);
-        if (_tool400Streak >= 3) {
-          err(`  [tool] stripping all tool_calls & retrying without tools after ${_tool400Streak} consecutive failures`);
-          _tool400Streak = 0;
+        err(`  [400] tool error (#${tool400Streak}/3): ${tools} — ${e.message}`);
+        if (tool400Streak >= 3) {
+          err(`  [tool] stripping all tool_calls & retrying without tools after ${tool400Streak} consecutive failures`);
+          tool400Streak = 0;
           const stripped = _stripAllToolCalls(compressedMessages);
           const retryReq = { ...ollamaReq, messages: stripped, stream: false, tools: undefined };
           try {
@@ -1840,11 +1622,10 @@ app.post("/v1/chat/completions", async c => {
       if (ch.usage) usage = ch.usage;
     }
 
-    // Token usage logging for non-streaming path
-    if (usage) {
-      log(t("tokenUsage", usage.prompt_tokens, usage.completion_tokens, usage.total_tokens));
-    } else {
-      log(t("tokenNoData"));
+    // Token usage — already included in reqLog completion (logDone)
+    if (!config.requestLog) {
+      if (usage) log(t("tokenUsage", usage.prompt_tokens, usage.completion_tokens, usage.total_tokens));
+      else log(t("tokenNoData"));
     }
 
     if (/rate limit/i.test(fullText)) {
@@ -1922,7 +1703,7 @@ app.post("/v1/chat/completions", async c => {
     //  1. Scan reasoning for tool calls (model may put them inside <think>)
     //  2. Track consecutive think-fallbacks and cut session if stuck
     //  3. Use a better fallback text than just the first line
-    if (!hasTools && !cleanText && reasoningContent) {
+    if (!hasTools && !cleanText && reasoningContent && reasoningCtx.sessionEntry) {
       reasoningCtx.sessionEntry.thinkFallbackStreak = (reasoningCtx.sessionEntry.thinkFallbackStreak || 0) + 1;
       const streak = reasoningCtx.sessionEntry.thinkFallbackStreak;
       // First, try to extract tool calls from the reasoning content
@@ -1985,8 +1766,7 @@ app.post("/v1/chat/completions", async c => {
     // When LLM calls task_complete, summarize the completed task's tool calls
     // + results into a compact instructional summary. Store per workspace so
     // future sessions inherit context without the full tool history clutter.
-    const completedTask = hasTaskComplete || (hasTools && allToolCalls.some(tc => tc.function?.name === "task_complete"));
-    if (completedTask) {
+    if (hasTaskComplete) {
       // Mark session so the NEXT request condenses tool history
       _taskCompletedSessions.set(reasoningCtx.conv, true);
       const wsRoot = getWorkspaceRoot(messages);
@@ -2007,8 +1787,8 @@ app.post("/v1/chat/completions", async c => {
     if (reasoningContent && !hasTaskComplete) {
       const choice = resp.choices[0];
       if (_displayReasoning) {
-        choice.message.content = _foldReasoningIntoContent(reasoningContent, choice.message.content || "");
-          choice.message.content = embedReasoning(choice.message.content, reasoningContent);
+        const foldedContent = _foldReasoningIntoContent(reasoningContent, choice.message.content || "");
+        choice.message.content = embedReasoning(foldedContent, reasoningContent);
       } else {
         addReasoningAliases(choice.message, reasoningContent);
       }
@@ -2300,24 +2080,6 @@ app.post("/api/chat", async c => {
         // unknown roles are silently dropped
       }
 
-      // Auto-match skills in /api/chat path (same logic as v1/chat/completions)
-      if (false) {
-        const sessionKey = c.req.header("x-session-id") || body.model;
-        if (sessionKey && !_skillsMatched.has(sessionKey)) {
-          const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
-          if (lastUserMsg?.content) {
-            const content = typeof lastUserMsg.content === "string" ? lastUserMsg.content : JSON.stringify(lastUserMsg.content);
-            const matched = matchSkills(_skillsCache, content);
-            _skillsMatched.set(sessionKey, matched?.length ? matched : []);
-          }
-        }
-        const cached = _skillsMatched.get(sessionKey);
-        if (cached?.length > 0) {
-          const ap = buildSkillActivationPrompt(cached, _skillsCache, 3);
-          if (ap) systemMsg += ap;
-        }
-      }
-
       // Identity override — MUST be first system instruction
       systemMsg = compactIdentity(model, apiThinking) + (systemMsg ? "\n\n" : "") + systemMsg;
 
@@ -2361,8 +2123,7 @@ app.post("/api/chat", async c => {
         if (nonSysMsgs.length > _paging2) {
           const dropped = nonSysMsgs.length - _paging2;
           const paged = [...sysMsgs, ...nonSysMsgs.slice(-_paging2)];
-          apiMessages.length = 0;
-          apiMessages.push(...paged);
+          apiMessages.splice(0, apiMessages.length, ...paged);
           debug(`  ${reasoningCtx.sessionPrefix} [paging] kept ${_paging2} messages (dropped ${dropped})`);
         }
       }
@@ -2395,11 +2156,10 @@ app.post("/api/chat", async c => {
       let chatUsage = null;
       let apiReasoning = null;
       for (const c of chunks) { if (c.usage) chatUsage = c.usage; if (c.message?.reasoning_content) apiReasoning = c.message.reasoning_content; }
-      // Token usage logging for /api/chat
-      if (chatUsage) {
-        log(t("tokenUsage", chatUsage.prompt_tokens, chatUsage.completion_tokens, chatUsage.total_tokens));
-      } else {
-        log(t("tokenNoData"));
+      // Token usage — already included in reqLog completion (logDone)
+      if (!config.requestLog) {
+        if (chatUsage) log(t("tokenUsage", chatUsage.prompt_tokens, chatUsage.completion_tokens, chatUsage.total_tokens));
+        else log(t("tokenNoData"));
       }
       // FIXED: Always check for XML tool calls, even without explicit vsTools
       const shouldExtract = vsTools?.length || isDeepSeekModel(model) || isMiMoModel(model) || hasXMLToolCalls(fullText);
@@ -2451,8 +2211,8 @@ app.post("/api/chat", async c => {
         const tcMsg = { role: "assistant", content: "", tool_calls: toolCalls };
         if (reasoningContent) {
           if (_displayReasoning) {
-              tcMsg.content = _foldReasoningIntoContent(reasoningContent, "");
-              tcMsg.content = embedReasoning(tcMsg.content, reasoningContent);
+              const foldedContent = _foldReasoningIntoContent(reasoningContent, "");
+              tcMsg.content = embedReasoning(foldedContent, reasoningContent);
             } else {
               tcMsg.reasoning_content = reasoningContent;
               tcMsg.content = embedReasoning(tcMsg.content || "", reasoningContent);
@@ -2531,128 +2291,10 @@ app.get("/stop", c => {
   return c.json({ status: "shutting down" });
 });
 
-// ── Passthrough proxy ──
-// Forwards unmatched paths to a configurable upstream (e.g., OpenCode API)
-// Controlled by PASSTHROUGH_BASE_URL env var
-// CR-2: SSRF protection — validates target URL, blocks private IPs, enforces timeout
-
-// Private/internal IP ranges blocked for SSRF protection
-const _BLOCKED_IP_PATTERNS = [
-  /^127\./,                           // loopback
-  /^10\./,                            // class A private
-  /^172\.(1[6-9]|2\d|3[01])\./,      // class B private
-  /^192\.168\./,                      // class C private
-  /^169\.254\./,                      // link-local
-  /^0\./,                             // unspecified
-  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGN
-  /^fc00:/i, /^fe80:/i, /^::1$/i,   // IPv6 private
-];
-
-function _isPrivateHost(hostname) {
-  if (!hostname) return true;
-  // Block raw IP addresses in private ranges
-  if (_BLOCKED_IP_PATTERNS.some(re => re.test(hostname))) return true;
-  // Block localhost aliases
-  if (hostname === "localhost" || hostname === "0.0.0.0" || hostname === "[::]" || hostname === "127.0.0.1" || hostname === "::1") return true;
-  return false;
-}
-
-function _validatePassthroughUrl(targetUrl) {
-  try {
-    const u = new URL(targetUrl);
-    if (_isPrivateHost(u.hostname)) {
-      return { valid: false, error: "Target host resolves to a private/internal address" };
-    }
-    return { valid: true, parsed: u };
-  } catch {
-    return { valid: false, error: "Invalid target URL" };
-  }
-}
-
-function isPassthroughPath(pathname) {
-  if (!config.passthroughBaseUrl) return false;
-  const prefixes = (Bun.env.PASSTHROUGH_PREFIXES || "/v1").split(",").map(p => p.trim()).filter(Boolean);
-  return prefixes.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
-}
-
-async function handlePassthrough(c) {
-  const url = new URL(c.req.url);
-  const method = c.req.method;
-
-  // CR-2: Validate target URL before proxying
-  const targetUrl = `${config.passthroughBaseUrl}${url.pathname}${url.search}`;
-  const urlCheck = _validatePassthroughUrl(targetUrl);
-  if (!urlCheck.valid) {
-    err(`  passthrough blocked: ${urlCheck.error} (${targetUrl})`);
-    return c.json({ error: { message: "Bad gateway", type: "server_error", code: "bad_gateway" } }, 502);
-  }
-
-  let body = null;
-
-  if (method !== "GET" && method !== "HEAD") {
-    try { body = await c.req.text(); } catch {}
-  }
-
-  // CR-2: Filter sensitive headers before forwarding
-  const SENSITIVE_HEADERS = new Set([
-    "host", "connection", "content-length", "cookie", "set-cookie",
-    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
-    "x-real-ip", "forwarded", "via"
-  ]);
-  const incomingHeaders = {};
-  for (const [k, v] of Object.entries(c.req.header())) {
-    if (!k || SENSITIVE_HEADERS.has(k.toLowerCase())) continue;
-    incomingHeaders[k] = v;
-  }
-
-  // The passthrough upstream should be configured with its own auth in PASSTHROUGH_BASE_URL
-
-  if (body && !incomingHeaders["content-type"]) {
-    incomingHeaders["content-type"] = "application/json";
-  }
-
-  // CR-2: Add timeout to prevent indefinite hang
-  const controller = new AbortController();
-  const timeoutMs = config.passthroughTimeoutMs || 30000;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try { timer.unref?.(); } catch {}
-
-  try {
-    const upstream = await fetchWithAgent(targetUrl, {
-      method,
-      headers: incomingHeaders,
-      signal: controller.signal,
-      ...(body ? { body } : {}),
-    });
-
-    clearTimeout(timer);
-
-    const respHeaders = new Headers(upstream.headers);
-    respHeaders.set("access-control-allow-origin", "*");
-
-    return new Response(upstream.body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: respHeaders,
-    });
-  } catch (e) {
-    clearTimeout(timer);
-    if (e.name === "AbortError") {
-      err(t("passthroughTimeout", targetUrl));
-      return c.json({ error: { message: "Upstream request timed out", type: "server_error", code: "gateway_timeout" } }, 504);
-    }
-    err(t("passthroughError", e.message));
-    return c.json({ error: { message: `Upstream unreachable: ${e.message}`, type: "server_error", code: "bad_gateway" } }, 502);
-  }
-}
-
 // ── Catch-all for unknown routes — log to discover unmapped Copilot endpoints ──
 
 app.all("*", c => {
   const url = new URL(c.req.url);
-  if (isPassthroughPath(url.pathname)) {
-    return handlePassthrough(c);
-  }
   if (url.pathname === "/api/generate") return c.json({ error: `Not found: ${c.req.method} ${c.req.url}` }, 404);
   const ua = c.req.header("User-Agent") || "";
   const bag = c.req.header("baggage") || "";
@@ -2709,10 +2351,21 @@ async function _runServer() {
   log(`${t("listening")} http://${host}:${serverRef.port}`);
 } else if (typeof process !== 'undefined' && process.versions?.node) {
   const http = await import("http");
-  serverRef = http.createServer({ noDelay: true, maxHeaderSize: 65536 }, (req, res) => {
+  serverRef = http.createServer({ noDelay: true, maxHeaderSize: 16384 }, (req, res) => {
     let raw = "";
-    req.on("data", chunk => raw += chunk);
+    let _bodyTooLarge = false;
+    const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
+    req.on("data", chunk => {
+      if (_bodyTooLarge) return;
+      raw += chunk;
+      if (raw.length > MAX_REQUEST_BODY_BYTES) {
+        _bodyTooLarge = true;
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "Request too large", type: "invalid_request_error", code: "request_too_large" } }));
+      }
+    });
     req.on("end", () => {
+      if (_bodyTooLarge) return;
       const headers = new Headers();
       for (const [k, v] of Object.entries(req.headers)) {
         if (v) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
@@ -2747,7 +2400,7 @@ async function _runServer() {
   serverRef.timeout = 120000;
   serverRef.headersTimeout = 65000;
   serverRef.requestTimeout = 120000;
-  serverRef.keepAliveTimeout = 65000;
+  serverRef.keepAliveTimeout = 120000;
   serverRef.maxHeadersCount = 200;
   await new Promise((resolve) => {
     serverRef.listen(port, host, 1024, () => {
@@ -2810,18 +2463,15 @@ try {
   const raw = fs.readFileSync(VERSION_FILE, "utf8").trim();
   const ts = Number(raw);
   if (ts > 0) _buildDate = new Date(ts).toISOString().slice(0, 10);
-} catch {}
+} catch (e) { /* intentionally ignored */ }
 
 let _bannerLines = [];
 const P = (s) => { _bannerLines.push(s); };
-const _G = "\x1b[32m"; // green for active debug
-const _cmdLine = () => "";
 
 P(W + "┌" + hr + W + "┐" + R);                                            // ┌───┐
 P(line("[ Shunnet.top ] Copilot Proxy" + R));
 const portLabel = port === 11434 ? `port: ${port} (default)` : `port: ${port}`;
 P(line(S + portLabel + "  |  built " + C + _buildDate + R + S + "  |  models.dev" + R));
-// P(_cmdLine()); // removed empty commands line
 
 // Split models into sections by separator order (DeepSeek → MiMo)
 	const dsStart = models.findIndex(m => m.model === `${SEP_DEEPSEEK}:latest`);
@@ -2838,43 +2488,6 @@ P(line(S + portLabel + "  |  built " + C + _buildDate + R + S + "  |  models.dev
 	if (hasDS) _bannerCollapsed.push(line(S + C + "▶ " + R + S + "DeepSeek (" + dsModels.length + ")" + R));
 	if (hasMiMo) _bannerCollapsed.push(line(S + C + "▶ " + R + S + "MiMo (" + mimoModels.length + ")" + R));
 	_bannerCollapsed.push(W + "└" + hr + W + "┘" + R);
-
-	function printTable(list) {
-	  for (const m of list) {
-	    const modes = getThinkingModes(m.model.replace(":latest", ""));
-	    const modeMap = { LOW: "L", MEDIUM: "M", HIGH: "H", MAXIMUM: "MX" };
-	    const thinkLabel = modes.length ? " [37m" + modes.map(t => modeMap[t] || t[0]).join("[0m[90m,[0m[37m") + "[0m" : "";
-	    const nameColor = S;
-	    const nameReset = R;
-	    const nameW = 38;
-	    const rawName = m.name + thinkLabel;
-	    const nameLen = rawName.replace(/[[0-9;]*m/g, "").length;
-	    let name;
-	    if (nameLen > nameW) {
-	      let vis = 0;
-	      let out = "";
-	      const parts = rawName.split(/([[0-9;]*m)/);
-	      for (const p of parts) {
-	        if (p.startsWith("[")) { out += p; continue; }
-	        const take = Math.min(p.length, nameW - 1 - vis);
-	        out += p.slice(0, take);
-	        vis += take;
-	        if (vis >= nameW - 1) break;
-	      }
-	      name = out + "…";
-	    } else {
-	      name = rawName + " ".repeat(Math.max(0, nameW - nameLen));
-	    }
-	    const id = (m.model.replace(":latest", "")).length > 22
-	      ? (m.model.replace(":latest", "")).slice(0, 21) + "…"
-	      : (m.model.replace(":latest", "")).padEnd(22);
-	    const n = +m.maxParams;
-	    const params = n
-	      ? (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n)).padEnd(7)
-	      : "-".padEnd(7);
-	    P(line(nameColor + name + nameReset + S + " │ " + R + id + S + " │ " + R + params + R));
-	  }
-	}
 
 	if (hasDS) {
 	  
@@ -2926,11 +2539,7 @@ if (_isTTY && !_isPlainMode) {
       else { restartSelf(43); }
       setTimeout(() => process.exit(43), 5000);
     } else if (cmd === "debug") {
-      Bun.env.DEBUG = _isDebug() ? "" : "1";
-      const newLine = _cmdLine();
-      // Update command line in banner dynamically (not hardcoded index)
-      const cmdIdx = _bannerLines.findIndex(l => l && l.includes("Commands:"));
-      if (cmdIdx >= 0) { _bannerLines[cmdIdx] = newLine; _bannerCollapsed[cmdIdx] = newLine; }
+      process.env.DEBUG = _isDebug() ? "" : "1";
       redrawBanner();
       log(`DEBUG ${_isDebug() ? "ON" : "OFF"}`);
     }
@@ -2943,7 +2552,7 @@ if (!_isTTY) (async () => {
     const { existsSync } = await import("node:fs");
     const { join } = await import("node:path");
     canUpdate = existsSync(join(process.cwd(), "update.cmd"));
-  } catch {}
+  } catch (e) { /* intentionally ignored */ }
   if (process.stdin.isTTY && typeof process.stdin.on === "function") {
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (data) => {
@@ -2985,16 +2594,16 @@ async function restartSelf(exitCode = 42) {
     const pathMod = await import("node:path");
     const exe = process.execPath;
     const wd = pathMod.dirname(exe);
-    const args = process.argv.slice(1).join(" ");
-    const cmd = `start /D ${wd} cmd /c ${exe} ${args}`.trim();
+    const args = process.argv.slice(1);
+
 
     if (typeof Bun !== 'undefined') {
-      Bun.spawn(["cmd", "/c", cmd], {
+      Bun.spawn(["cmd", "/c", "start", "/D", wd, "cmd", "/c", exe, ...args], {
         stdout: "ignore", stderr: "ignore", stdin: "ignore",
       }).unref();
     } else {
       const { spawn } = await import("node:child_process");
-      spawn("cmd", ["/c", cmd], {
+      spawn("cmd", ["/c", "start", "/D", wd, "cmd", "/c", exe, ...args], {
         detached: true, stdio: "ignore", windowsHide: true,
       }).unref();
     }

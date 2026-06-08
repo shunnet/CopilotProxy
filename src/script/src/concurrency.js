@@ -11,8 +11,12 @@ import { log as modLog } from "./logger.js";
 const log = (msg) => modLog(`[queue] ${msg}`);
 
 // ── Config helpers ──
+const _configCache = { value: null, ts: 0 };
+const _CONFIG_TTL = 1000;
 function getConfig() {
-  return {
+  const now = Date.now();
+  if (_configCache.value !== null && now - _configCache.ts < _CONFIG_TTL) return _configCache.value;
+  _configCache.value = {
     thinkingConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_THINKING || "5", 10)),
     standardConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_STANDARD || "15", 10)),
     maxRetries: Math.max(0, parseInt(Bun.env.RETRY_MAX || "3", 10)),
@@ -25,6 +29,8 @@ function getConfig() {
     toolOutputHeadChars: Math.max(0, parseInt(Bun.env.TOOL_OUTPUT_HEAD_CHARS || "6000", 10)),
     toolOutputTailChars: Math.max(0, parseInt(Bun.env.TOOL_OUTPUT_TAIL_CHARS || "2000", 10)),
   };
+  _configCache.ts = now;
+  return _configCache.value;
 }
 
 // ── ConcurrencyQueue ──
@@ -173,6 +179,7 @@ export async function retryWithBackoff(fn, options = {}) {
 }
 
 function _shouldRetry(err) {
+  // Expected error contract: errors that have exhausted retries carry `_retriesExhausted: true`
   // zenRequest handles its own 429 retries — don't double-retry
   if (err?._retriesExhausted) return false;
   // M12: RateLimitError with status 429 should not retry (already handled by upstream)
@@ -197,7 +204,7 @@ let _instance = null;
 
 export class ModelConcurrencyManager {
   constructor() {
-    if (_instance) return _instance;
+    if (_instance) throw new Error("ModelConcurrencyManager is a singleton. Use ModelConcurrencyManager.getInstance() instead.");
     const cfg = getConfig();
     this.thinkingQueue = new ConcurrencyQueue(cfg.thinkingConcurrency, "thinking");
     this.standardQueue = new ConcurrencyQueue(cfg.standardConcurrency, "standard");
@@ -246,7 +253,7 @@ export class ModelConcurrencyManager {
 
   _isThinkingModel(modelName) {
     if (!modelName) return false;
-    return /thinking|reasoning|deep.?seek.*r1|o1|o3/i.test(modelName);
+    return /\bthinking\b|\breasoning\b|deep.?seek.*r1|\bo1\b|\bo3\b/i.test(modelName);
   }
 
   updateFromConfig() {
@@ -314,7 +321,9 @@ export function truncateToolMessagesInPayload(payload, opts = {}) {
     const omitted = original.length - head.length - tail.length;
     const marker = `\n\n...[tool output truncated: ${omitted} chars omitted]...\n\n`;
     const newContent = head + marker + tail;
-    // Create new object instead of mutating msg in-place
+    // NOTE: messages array is mutated in-place to avoid creating a full copy of potentially
+    // large conversation arrays. The caller (request handler) discards the messages array
+    // after this function returns, so immutability would provide no safety benefit here.
     const idx = messages.indexOf(msg);
     messages[idx] = { ...msg, content: newContent };
     truncatedMessages++;

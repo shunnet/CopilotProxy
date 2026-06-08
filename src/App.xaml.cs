@@ -76,19 +76,25 @@ namespace Snet.CopilotProxy
         /// </summary>
         private static List<EditModel> GetEditModels() =>
         [
+            // ── Token 用量 — 绿色系 ──
+            new() { Name = "[request]",              Color = "#43A047" },
+            new() { Name = "[response]",             Color = "#43A047" },
+
             // ── 成功/状态 — 绿色系（白天深绿 #2E7D32，兼容暗黑） ──
             new() { Name = "[ Info ]",              Color = "#2E7D32" },
             new() { Name = "[INFO]",                Color = "#2E7D32" },
             new() { Name = "[model]",               Color = "#2E7D32" },
             new() { Name = "[status]",              Color = "#2E7D32" },
             new() { Name = "[i18n]",                Color = "#2E7D32" },
-            new() { Name = "[token]",               Color = "#2E7D32" },
+            new() { Name = "[generic]",                Color = "#2E7D32" },
             new() { Name = "TRUE",                  Color = "#2E7D32" },
             new() { Name = "Build successful",      Color = "#2E7D32" },
 
             // ── 模型/服务名 — 青色系 ──
             new() { Name = "DeepSeek",              Color = "#0288D1" },
+            new() { Name = "deepseek",              Color = "#0288D1" },
             new() { Name = "MiMo",                  Color = "#00838F" },
+            new() { Name = "mimo",                  Color = "#00838F" },
             new() { Name = "[ Shunnet.top ]",       Color = "#1565C0" },
             new() { Name = "[Shunnet.top]",          Color = "#1565C0" },
 
@@ -103,13 +109,11 @@ namespace Snet.CopilotProxy
 
             // ── API/网络错误 — 暗红色 ──
             new() { Name = "[chat]",                Color = "#D32F2F" },
-            new() { Name = "[deepseek]",            Color = "#D32F2F" },
-            new() { Name = "[mimo]",                Color = "#D32F2F" },
             new() { Name = "[404]",                 Color = "#D32F2F" },
 
             // ── 会话/保活 — 蓝色系 ──
             new() { Name = "[session]",             Color = "#1565C0" },
-            new() { Name = "new session",           Color = "#1976D2" },
+            new() { Name = "[ new session ]",       Color = "#1976D2" },
             new() { Name = "[keepalive]",           Color = "#1565C0" },
             new() { Name = "[保活]",                Color = "#1565C0" },
             new() { Name = "[continuity]",          Color = "#1565C0" },
@@ -123,8 +127,6 @@ namespace Snet.CopilotProxy
             // ── 工具/Stream — 青色 ──
             new() { Name = "[tool]",                Color = "#00838F" },
             new() { Name = "[stream]",              Color = "#00838F" },
-            new() { Name = "[schema]",              Color = "#00838F" },
-            new() { Name = "[term]",                Color = "#00838F" },
 
             // ── 调试/诊断 — 灰色系 ──
             new() { Name = "[debug]",               Color = "#616161" },
@@ -140,13 +142,6 @@ namespace Snet.CopilotProxy
 
             // ── 控制台输出 — 琥珀色 ──
             new() { Name = "[ Console ]",           Color = "#E65100" },
-
-            // ── Autopilot/循环控制 — 橙色系 ──
-            new() { Name = "[autopilot]",           Color = "#E65100" },
-            new() { Name = "[nags]",                Color = "#E65100" },
-            new() { Name = "[think-fallback]",      Color = "#E65100" },
-            new() { Name = "[LOOP-BREAK]",          Color = "#E65100" },
-            new() { Name = "[task_complete]",       Color = "#E65100" },
 
             // ── 速率/队列 — 橙色系 ──
             new() { Name = "[rate-limit]",          Color = "#EF6C00" },
@@ -202,9 +197,9 @@ namespace Snet.CopilotProxy
             MainWindow window = InjectionWpf.Window<MainWindow, MainWindowModel>(true);
             window.Show();
 
-            // Show() 之后窗口的 HWND 才真正创建
-            // 此时立即缓存句柄，后续即使窗口 Hide 到托盘也能唤醒
+            // Show() 之后窗口的 HWND 才真正创建，注册后启动管道监听
             _singleInstance.RegisterMainWindow(window);
+            _singleInstance.StartListening();
         }
 
         /// <summary>
@@ -368,9 +363,7 @@ namespace Snet.CopilotProxy
         {
             try
             {
-                var envPath = handler.EnvHandle.GetEnvPath();
-                if (File.Exists(envPath))
-                    return handler.EnvHandle.Load().ServerPort;
+                return handler.EnvHandle.Load().ServerPort;
             }
             catch { }
             return 11434;

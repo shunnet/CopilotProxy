@@ -84,6 +84,9 @@ export const TOOL_SCHEMAS = {
  * @param {object} args - 当前参数
  * @returns {object} - 补全后的参数
  */
+const _ARRAY_FIELDS = new Set(["replacements", "searchQueries", "queries", "steps", "terms", "filterTypes", "filterValues", "questions", "urls"]);
+// Note: "explanation" is a string field, intentionally excluded from _ARRAY_FIELDS
+
 export function applyToolDefaults(toolName, args) {
   const schema = TOOL_SCHEMAS[toolName];
   if (!schema) return args;
@@ -101,7 +104,7 @@ export function applyToolDefaults(toolName, args) {
       else if (field === "headLines" || field === "tailLines") result[field] = 0;
       else if (field === "stop") result[field] = false;
       else if (field === "waitMs") result[field] = 0;
-      else if (Array.isArray(schema.properties?.[field]) || field.endsWith("s") || field === "queries") result[field] = [];
+      else if (_ARRAY_FIELDS.has(field)) result[field] = [];
       else result[field] = "";
     }
   }
@@ -116,18 +119,6 @@ export function applyToolDefaults(toolName, args) {
 export function isKnownTool(toolName) {
   return toolName in TOOL_SCHEMAS;
 }
-
-/**
- * VS 专用 custom 类型工具列表（来源：session-events.schema.json）
- * 这些工具以 type:"custom" 格式发送，需要转换为标准 type:"function" 格式
- */
-export const VS_CUSTOM_TOOLS = new Set([
-  "task",           // 子任务执行器
-  "explore",        // 探索 Agent
-  "research",       // 研究 Agent
-  "code_review",    // 代码审查 Agent
-  "configure",      // Copilot 配置
-]);
 
 /**
  * 将 VS custom 类型工具调用转换为标准 function 格式

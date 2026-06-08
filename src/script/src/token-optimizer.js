@@ -41,9 +41,18 @@ export const CompressionLevel = Object.freeze({
   DELTA: "delta",
 });
 
-// ── Common term substitutions ──
-function _substitute(d) {
-  return d
+// ---- Compression thresholds ----
+const LS_COMPRESS_THRESHOLD = 300;
+const DIFF_COMPRESS_THRESHOLD = 1000;
+const SUMMARY_CHARS = 500;
+const HEURISTIC_PRUNE_MIN_LENGTH = 200;
+const VS_BLOCK_HEURISTIC_LENGTH = 2000;
+const CONSUMED_TOOL_OUTPUT_LENGTH = 500;
+const CONSUMED_TOOL_SNIPPET = 200;
+
+// ---- Common term substitutions ----
+function _substitute(text) {
+  return text
     .replace(/GitHub\s*Copilot\s*Chat/gi, "Copilot Chat")
     .replace(/directory/gi, "dir")
     .replace(/directories/gi, "dirs")
@@ -58,7 +67,7 @@ function _substitute(d) {
 
 export function compressDescription(desc) {
   if (!desc) return "";
-  let c = desc
+  let compressed = desc
     .replace(/^(This tool|Use this tool|This function|Use this function)\s*(allows you to|enables you to|lets you|helps you|can be used to)?\s*/gi, "")
     .replace(/\s+(allows you to|enables you to|lets you|helps you to)\s+/gi, " ")
     .replace(/the\s+following\s+/gi, "")
@@ -67,13 +76,13 @@ export function compressDescription(desc) {
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  if (c.length > 120) {
-    const first = c.match(/^[^.!?]+[.!?]/);
-    c = first ? first[0] : c.slice(0, 120) + "...";
+  if (compressed.length > 120) {
+    const first = compressed.match(/^[^.!?]+[.!?]/);
+    compressed = first ? first[0] : compressed.slice(0, 120) + "...";
   }
-  c = _substitute(c);
+  compressed = _substitute(compressed);
 
-  return c;
+  return compressed;
 }
 
 export function compressToolSchema(schema) {
@@ -84,6 +93,9 @@ export function compressToolSchema(schema) {
   if (schema.required) out.required = schema.required;
   if (schema.minimum !== undefined) out.minimum = schema.minimum;
   if (schema.maximum !== undefined) out.maximum = schema.maximum;
+
+  if (schema.default !== undefined) out.default = schema.default;
+  if (schema.description) out.description = schema.description;
 
   if (schema.properties) {
     out.properties = {};
@@ -385,209 +397,54 @@ function _applyRTK(text) {
 // All Caveman + progressive message aging + tool result summarization
 // ═══════════════════════════════════════════════════
 
-function _summarizeToolResult(text, toolName) {
-  if (!text) return text;
-  // For grep results: "file:line:content"
-  if (/^([\w./\\-]+):(\d+):/.test(text) && text.length > 500) {
+const TOOL_SUMMARIZERS = {
+  grepResults(text) {
     const lines = text.split("\n").filter(Boolean);
-    const fileMatch = lines[0].match(/^([\w./\\-]+):(\d+):/);
+    const fileMatch = lines[0].match(/^([\w.\/\-]+):(\d+):/);
     if (fileMatch) {
       const file = fileMatch[1].split("/").pop() || fileMatch[1];
       return `[${file}+${lines.length} matches in ${lines[0].split(":")[0]}]`;
     }
-  }
-  // For file reads: show first ~500 chars
-  if (toolName === "read" && text.length > 500) {
-    const head = text.slice(0, 300).replace(/\n/g, " ").trim();
+    return null;
+  },
+  readSnippet(text) {
+    const head = text.slice(0, 300).replace(/\r\n/g, " ").trim();
     return `[read snippet: ${head}... (${text.length} chars total)]`;
-  }
-  // For ls/dir: compress long listings
-  if ((toolName === "ls" || toolName === "dir" || toolName === "list_files") && text.length > 300) {
-    const count = (text.match(/\n/g) || []).length + 1;
+  },
+  listFiles(text) {
+    const count = (text.match(/\r\n/g) || []).length + 1;
     return `[${count} files/dirs]`;
-  }
-  // For git diff: summarise
-  if (toolName === "git diff" && text.length > 1000) {
+  },
+  gitDiffSummary(text) {
     const fileMatches = text.match(/^diff --git\s+a\/(.+?)\s+b\//gm);
     const files = fileMatches ? fileMatches.map(m => m.match(/a\/(.+?)\s/)?.[1] || "").filter(Boolean) : [];
-    return files.length ? `[diff: ${files.join(" ")}]` : text.slice(0, 200) + "...";
+    if (files.length) return `[diff: ${files.join(" ")}]`;
+    return null;
+  },
+};
+
+function _summarizeToolResult(text, toolName) {
+  if (!text) return text;
+  // For grep results: detect by pattern, not by tool name
+  if (/^([\w.\/\-]+):(\d+):/.test(text) && text.length > SUMMARY_CHARS) {
+    const result = TOOL_SUMMARIZERS.grepResults(text);
+    if (result) return result;
+  }
+  // For file reads: show first ~500 chars
+  if (toolName === "read" && text.length > SUMMARY_CHARS) {
+    return TOOL_SUMMARIZERS.readSnippet(text);
+  }
+  // For ls/dir: compress long listings
+  if ((toolName === "ls" || toolName === "dir" || toolName === "list_files") && text.length > LS_COMPRESS_THRESHOLD) {
+    return TOOL_SUMMARIZERS.listFiles(text);
+  }
+  // For git diff: summarise
+  if (toolName === "git diff" && text.length > DIFF_COMPRESS_THRESHOLD) {
+    const result = TOOL_SUMMARIZERS.gitDiffSummary(text);
+    if (result) return result;
+    return text.slice(0, 200) + "...";
   }
   return text;
-}
-
-function _progressiveAging(messages) {
-  if (!messages?.length) return messages;
-  const total = messages.length;
-  return messages.map((m, i) => {
-    if (total <= 6) return m; // Don't age short conversations
-    const age = total - 1 - i; // 0 = newest, high = oldest
-    if (age <= 2) return m;
-    const content = typeof m.content === "string" ? m.content : "";
-    if (age <= 5) {
-      // Medium age: truncate content at word boundary
-      if (content.length > 200) {
-        const cut = content.slice(0, 200);
-        const wordEnd = cut.lastIndexOf(" ");
-        return { ...m, content: (wordEnd > 100 ? cut.slice(0, wordEnd) : cut) + "…" };
-      }
-      return m;
-    }
-    // Old messages: heavily summarize at word boundary
-    if (content.length > 80) {
-      const cut = content.slice(0, 80);
-      const wordEnd = cut.lastIndexOf(" ");
-      return { ...m, content: (wordEnd > 40 ? cut.slice(0, wordEnd) : cut) + "…" };
-    }
-    return m;
-  });
-}
-
-// ═══════════════════════════════════════════════════
-// Old tool output dropping
-// ═══════════════════════════════════════════════════
-
-function _dropOldToolOutputs(messages, keepCount) {
-  if (!messages?.length || !keepCount || keepCount < 1) return messages;
-
-  // Walk backwards, grouping tool results by their parent assistant message.
-  // Each assistant-with-tool_calls + its tool results is one "turn group".
-  // Groups are kept or dropped atomically to avoid orphaned tool messages.
-  const dropIndices = new Set();
-
-  // First pass: walk backwards and identify the assistant for each tool message
-  const toolParent = new Map(); // tool message index → assistant message index
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i].role === "tool" && messages[i].tool_call_id) {
-      for (let j = i - 1; j >= 0; j--) {
-        if (messages[j].role === "assistant" && messages[j].tool_calls?.length) {
-          const ids = new Set(messages[j].tool_calls.map(tc => tc.id));
-          if (ids.has(messages[i].tool_call_id)) {
-            toolParent.set(i, j);
-            break;
-          }
-        }
-        if (messages[j].role !== "assistant" && messages[j].role !== "tool" && messages[j].role !== "user") break;
-      }
-    }
-  }
-
-  // Build turn groups: each group = { assistantIdx, toolIndices: [...] }
-  const groups = [];
-  const groupedTools = new Set();
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "tool" && !groupedTools.has(i)) {
-      const parentIdx = toolParent.get(i);
-      if (parentIdx == null) continue; // orphaned tool — leave it alone
-      const toolIndices = [i];
-      groupedTools.add(i);
-      // Collect all tool results from the same parent assistant
-      for (let k = parentIdx + 1; k < messages.length && k !== i; k++) {
-        if (messages[k].role === "tool" && !groupedTools.has(k) && toolParent.get(k) === parentIdx) {
-          toolIndices.push(k);
-          groupedTools.add(k);
-        }
-      }
-      // Check if the assistant has text content (don't drop if it does)
-      const assistantHasText = messages[parentIdx].content != null && (
-        typeof messages[parentIdx].content === "string"
-          ? messages[parentIdx].content.trim().length > 0
-          : Array.isArray(messages[parentIdx].content)
-            ? messages[parentIdx].content.some(p => (p?.text || p?.content || "")?.trim?.()?.length > 0)
-            : false
-      );
-      if (assistantHasText) continue; // skip group — can't drop tool results without orphaning tool_calls on text-bearing assistant
-      groups.push({ assistantIdx: parentIdx, toolIndices });
-    }
-  }
-
-  // Groups are built in reverse order (newest first).
-  // Keep the most recent `keepCount` groups, drop the rest.
-  for (let g = keepCount; g < groups.length; g++) {
-    for (const ti of groups[g].toolIndices) {
-      dropIndices.add(ti);
-    }
-    if (groups[g].assistantIdx >= 0) {
-      dropIndices.add(groups[g].assistantIdx);
-    }
-  }
-
-  if (!dropIndices.size) return messages;
-  return messages.filter((_, i) => !dropIndices.has(i));
-}
-
-// Lightweight version for compression — just file names, no content
-function _extractToolSummary(messages) {
-  if (!messages?.length) return "";
-  const reads = [];
-  const edits = [];
-  const searches = [];
-  const commands = [];
-  const creates = [];
-  const others = [];
-
-  for (const m of messages) {
-    if (m.role !== "assistant" || !m.tool_calls?.length) continue;
-    for (const tc of m.tool_calls) {
-      const name = tc.function?.name || "";
-      let args = {};
-      try { args = typeof tc.function?.arguments === "string" ? JSON.parse(tc.function.arguments) : (tc.function?.arguments || {}); } catch { debug(`[compress] failed to parse arguments for tool call ${tc.id || "unknown"}`); }
-      const file = args.filePath || args.filename || args.path || args.file || "";
-      const query = args.query || args.pattern || args.search || "";
-
-      if (/^(get_file|read_file)$/i.test(name)) {
-        if (file && !reads.includes(file)) reads.push(file);
-      } else if (/^(replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file)$/i.test(name)) {
-        if (file && !edits.includes(file)) edits.push(file);
-      } else if (/^(create_file)$/i.test(name)) {
-        if (file && !creates.includes(file)) creates.push(file);
-      } else if (/^(grep_search|search_content|semantic_search|code_search|file_search|find_files)$/i.test(name)) {
-        if (query && !searches.includes(query)) searches.push(query);
-      } else if (/^(run_command_in_terminal|execute_command|run_in_terminal)$/i.test(name)) {
-        const cmd = args.command || args.cmd || "";
-        if (cmd) commands.push(cmd.slice(0, 80));
-      } else if (!/^(task_complete|plan|finish_plan)$/i.test(name)) {
-        others.push(name);
-      }
-    }
-  }
-
-  const parts = [];
-  if (reads.length) parts.push(`READ: ${reads.join(", ")}`);
-  if (edits.length) parts.push(`EDITED: ${edits.join(", ")}`);
-  if (creates.length) parts.push(`CREATED: ${creates.join(", ")}`);
-  if (searches.length) parts.push(`SEARCHED: ${searches.slice(0, 5).join(", ")}`);
-  if (commands.length) parts.push(`RAN: ${commands.slice(0, 5).join("; ")}`);
-  if (others.length) parts.push(`TOOLS: ${[...new Set(others)].join(", ")}`);
-
-  return parts.length ? `[Session context: ${parts.join(" | ")}]` : "";
-}
-
-function _injectToolSummary(messages) {
-  if (!messages?.length) return messages;
-  // Find the first tool result
-  let firstToolIdx = -1;
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i].role === "tool") { firstToolIdx = i; break; }
-  }
-  if (firstToolIdx < 0) return messages;
-
-  // Find the assistant message with tool_calls that precedes this tool result
-  // The summary must go BEFORE the assistant, not between assistant and tool
-  let insertIdx = firstToolIdx;
-  for (let i = firstToolIdx - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant" && messages[i].tool_calls?.length) {
-      insertIdx = i;
-      break;
-    }
-    if (messages[i].role !== "assistant" && messages[i].role !== "tool") break;
-  }
-
-  const toolBlock = messages.slice(firstToolIdx);
-  const summary = _extractToolSummary(toolBlock);
-  if (!summary) return messages;
-
-  // Insert summary before the assistant that starts the tool chain
-  return [...messages.slice(0, insertIdx), { role: "system", content: summary }, ...messages.slice(insertIdx)];
 }
 
 // ═══════════════════════════════════════════════════
@@ -604,49 +461,76 @@ const ULTRA_STOPWORDS = new Set([
   "why", "how", "all", "both", "each", "few", "more", "most", "other",
   "some", "such", "same", "so", "than", "too", "very", "just",
   "about", "now", "also", "still",
-  // 中文功能词（不改变语义的填充词）
-  "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都",
-  "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你",
-  "会", "着", "没有", "看", "好", "自己", "这",
 ]);
 
 function _heuristicPrune(text) {
-  if (!text || text.length < 200) return text;
+  if (!text || text.length < HEURISTIC_PRUNE_MIN_LENGTH) return text;
   const lines = text.split("\n");
+  if (lines.length <= 10) return text;
+
+  const totalLines = lines.length;
+  const alwaysKeepFirst = Math.max(1, Math.floor(totalLines * 0.2));
+  const alwaysKeepLast = Math.max(1, Math.floor(totalLines * 0.1));
+
+  // Score each line based on content value
   const scored = lines.map(line => {
     const trimmed = line.trim();
-    if (!trimmed) return { line, score: -1 }; // keep blank lines
-    // Score: longer lines, lines with code/numbers, lines with file paths score higher
+    if (!trimmed) return { line, score: -1 };
     let score = trimmed.length;
     if (/[{}();<>=]/.test(trimmed)) score += 20;
     if (/\d/.test(trimmed)) score += 10;
     if (/[/\\]/.test(trimmed)) score += 5;
-    if (/^[A-Z][a-z]+\s/.test(trimmed)) score += 3; // likely English sentence
+    if (/^[A-Z][a-z]+\s/.test(trimmed)) score += 3;
     return { line, score };
   });
-  // Sort by score descending, keep top 70%
-  const threshold = Math.floor(scored.length * 0.7);
+
   const keep = new Set();
-  const indexed = scored.map((s, i) => ({ s, i }));
-  indexed
-    .sort((a, b) => b.s.score - a.s.score)
-    .slice(0, threshold)
-    .forEach(entry => keep.add(entry.i));
-  return lines.filter((_, i) => scored[i].score < 0 || keep.has(i)).join("\n");
+
+  // Always keep first ~20% and last ~10% of lines (preserves headers, conclusions)
+  for (let i = 0; i < totalLines; i++) {
+    if (i < alwaysKeepFirst || i >= totalLines - alwaysKeepLast) {
+      keep.add(i);
+    } else if (scored[i].score < 0) {
+      keep.add(i); // always keep blank lines
+    }
+  }
+
+  // For the middle 70% section, keep the highest-scoring lines without reordering
+  const middleStart = alwaysKeepFirst;
+  const middleEnd = totalLines - alwaysKeepLast;
+
+  if (middleStart < middleEnd) {
+    const middleEntries = [];
+    for (let i = middleStart; i < middleEnd; i++) {
+      if (scored[i].score >= 0) {
+        middleEntries.push({ idx: i, score: scored[i].score });
+      }
+    }
+    // Keep the top ~70% of middle entries by score (preserving original order)
+    middleEntries.sort((a, b) => b.score - a.score);
+    const keepCount = Math.floor(middleEntries.length * 0.7);
+    for (let j = 0; j < keepCount; j++) {
+      keep.add(middleEntries[j].idx);
+    }
+  }
+
+  return lines.filter((_, i) => keep.has(i)).join("\n");
 }
 
 function _stripStopwords(text) {
+  // Limit stopword removal to 30 words per call to preserve readability
+  const MAX_STOPWORDS_REMOVED = 30;
   const words = text.split(/(\s+)/);
-  let result = "";
+  const kept = [];
   let skipCount = 0;
-  for (const w of words) {
-    if (ULTRA_STOPWORDS.has(w.toLowerCase()) && skipCount < 30) {
+  for (const word of words) {
+    if (ULTRA_STOPWORDS.has(word.toLowerCase()) && skipCount < MAX_STOPWORDS_REMOVED) {
       skipCount++;
       continue;
     }
-    result += w;
+    kept.push(word);
   }
-  return result;
+  return kept.join("");
 }
 
 // ═══════════════════════════════════════════════════
@@ -677,7 +561,7 @@ function _detectVSBlock(content) {
     }
   }
   // Heuristic: long first user message (>2KB) with VS version or workspace root patterns
-  if (content.length > 2000) {
+  if (content.length > VS_BLOCK_HEURISTIC_LENGTH) {
     if (/visual\s+studio\s+\d{4}/i.test(content) ||
         /workspace root/i.test(content) ||
         /currently opened file/i.test(content) ||
@@ -692,9 +576,17 @@ function _detectVSBlock(content) {
 function _extractContextSummary(content) {
   const parts = [];
   const wsMatch = content.match(/(?:workspace root|path to (?:the )?workspace root):?\s*(\S+)/i);
-  if (wsMatch) parts.push(`ws:${wsMatch[1].split("/").pop() || wsMatch[1].split("\\").pop() || wsMatch[1]}`);
+  if (wsMatch) {
+    const segments = wsMatch[1].split(/[/\\]/);
+    const name = segments.filter(Boolean).pop() || wsMatch[1];
+    parts.push(`ws:${name}`);
+  }
   const afMatch = content.match(/(?:currently opened|active) file:?\s*(\S+)/i);
-  if (afMatch) parts.push(`file:${afMatch[1].split("/").pop() || afMatch[1].split("\\").pop()}`);
+  if (afMatch) {
+    const segments = afMatch[1].split(/[/\\]/);
+    const name = segments.filter(Boolean).pop() || afMatch[1];
+    parts.push(`file:${name}`);
+  }
   const vsMatch = content.match(/visual\s+studio\s+(enterprise|professional|community)?\s*(\d{4})\s*\((\d+\.\d+\.\d+)(-insiders)?\)/i);
   if (vsMatch) parts.push(`VS${vsMatch[3]}`);
   const tabCount = (content.match(/open tabs/i) ? (content.match(/^[ \t]*[^\n]+\.(cs|ts|js|py|go|rs|java|cpp|c|h|json|xml|yaml|yml|md|sql)/gim) || []).length : 0);
@@ -738,28 +630,55 @@ function _stripHistoricalVSContext(messages, isVSClient) {
 function _compactHistoricalToolOutputs(messages) {
   if (!messages?.length || messages.length <= 2) return messages;
 
-  const result = [];
-  const consumedTools = new Set();
+  // Walk forward from each assistant: all tool results following its tool_calls
+  // are "consumed" if another assistant message appears after them.
+  const consumedToolIndices = new Set();
 
-  for (let i = 1; i < messages.length; i++) {
+  for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
-    const prev = messages[i - 1] || {};
-    const next = messages[i + 1] || {};
+    if (m.role !== "assistant" || !m.tool_calls?.length) continue;
 
-    if (m.role === "tool" && prev.role === "assistant" && next.role === "assistant") {
-      consumedTools.add(i);
+    // Collect all consecutive tool messages that belong to this assistant's tool_calls
+    const toolIds = new Set(m.tool_calls.map(tc => tc.id));
+    const toolResultIndices = [];
+
+    for (let j = i + 1; j < messages.length; j++) {
+      if (messages[j].role === "tool" && toolIds.has(messages[j].tool_call_id)) {
+        toolResultIndices.push(j);
+      } else if (messages[j].role !== "tool") {
+        break;
+      }
+    }
+
+    if (toolResultIndices.length === 0) continue;
+
+    // Check if any subsequent assistant message exists after the tool results
+    const lastToolIdx = toolResultIndices[toolResultIndices.length - 1];
+    let hasSubsequentAssistant = false;
+    for (let j = lastToolIdx + 1; j < messages.length; j++) {
+      if (messages[j].role === "assistant") {
+        hasSubsequentAssistant = true;
+        break;
+      }
+    }
+
+    if (hasSubsequentAssistant) {
+      for (const ti of toolResultIndices) {
+        consumedToolIndices.add(ti);
+      }
     }
   }
 
+  const result = [];
   for (let i = 0; i < messages.length; i++) {
-    if (consumedTools.has(i)) {
+    if (consumedToolIndices.has(i)) {
       const m = messages[i];
       const content = typeof m.content === "string" ? m.content : "";
-      if (content.length > 500) {
-        const head = content.slice(0, 200).replace(/\n/g, " ").trim();
-        const compact = `[snet: consumed tool output — ${head}... (${content.length} chars)]`;
+      if (content.length > CONSUMED_TOOL_OUTPUT_LENGTH) {
+        const head = content.slice(0, CONSUMED_TOOL_SNIPPET).replace(/\r\n/g, " ").trim();
+        const compact = "[snet: consumed tool output - " + head + "... (" + content.length + " chars)]";
         result.push({ ...m, content: compact });
-        debug(`[delta] compacted consumed tool output (${content.length} → ${compact.length} chars) at message[${i}]`);
+        debug("[delta] compacted consumed tool output (" + content.length + " -> " + compact.length + " chars) at message[" + i + "]");
       } else {
         result.push(m);
       }
@@ -791,167 +710,60 @@ export function compressHistory(messages, isVSClient = true) {
  * @param {string} [toolName] - Optional tool name for tool-result compression
  * @returns {string} Compressed content
  */
+// ---- Compression step routing ----
+const COMPRESSION_PIPELINE = Object.freeze({
+  lite: ["compressLite"],
+  caveman: ["compressLite", "applyCaveman"],
+  standard: ["compressLite", "applyCaveman"],
+  aggressive: ["compressLite", "applyCaveman", "summarizeToolResult"],
+  ultra: ["compressLite", "applyCaveman", "summarizeToolResult", "heuristicPrune", "stripStopwords"],
+  rtk: ["compressLite", "applyCommandAwareRTK"],
+  stacked: ["compressLite", "applyCommandAwareRTK", "applyCaveman"],
+});
+
+function _runCompressionStep(stepName, text, toolName) {
+  switch (stepName) {
+    case "compressLite": return _compressLite(text);
+    case "applyCaveman": return _applyCaveman(text);
+    case "applyCommandAwareRTK": return _isCommandOutput(text) ? _applyRTK(text) : text;
+    case "summarizeToolResult": return toolName ? _summarizeToolResult(text, toolName) : text;
+    case "heuristicPrune": return _heuristicPrune(text);
+    case "stripStopwords": return _stripStopwords(text);
+    default: return text;
+  }
+}
+
 export function compressContent(content, level = "stacked", toolName = "") {
   if (!content || typeof content !== "string") return content || "";
   if (level === "off") return content;
 
-  // Preserve code blocks from compression (use §CB/§IC markers to avoid null-byte collision)
+  // Preserve code blocks from compression (use __TOKC_CB_/__TOKC_IC_ markers to avoid collision)
   const codeBlocks = [];
-  const preserved = content.replace(/```[\s\S]*?```/g, (match) => {
+  const preserved = content.replace(/```[\s\S]*?```/g, function(match) {
     codeBlocks.push(match);
-    return `§CB${codeBlocks.length - 1}§`;
+    return "__TOKC_CB_" + (codeBlocks.length - 1) + "__";
   });
 
   // Also preserve inline code
   const inlineCodes = [];
-  const preserved2 = preserved.replace(/`[^`]+`/g, (match) => {
+  const preserved2 = preserved.replace(/`[^`]+`/g, function(match) {
     inlineCodes.push(match);
-    return `§IC${inlineCodes.length - 1}§`;
+    return "__TOKC_IC_" + (inlineCodes.length - 1) + "__";
   });
 
+  // Run pipeline steps
+  const steps = COMPRESSION_PIPELINE[level] || COMPRESSION_PIPELINE.stacked;
   let result = preserved2;
-
-  // Lite compression: always applied for any level above off
-  if (level !== "off") {
-    result = _compressLite(result);
+  for (const step of steps) {
+    result = _runCompressionStep(step, result, toolName);
   }
 
-  // Caveman / Standard (stacked does RTK first then caveman, handled below)
-  if (level === "caveman" || level === "standard" || level === "aggressive" || level === "ultra") {
-    result = _applyCaveman(result);
-  }
-
-  // Aggressive
-  if (level === "aggressive" || level === "ultra") {
-    if (toolName) {
-      result = _summarizeToolResult(result, toolName);
-    }
-  }
-
-  // Ultra
-  if (level === "ultra") {
-    result = _heuristicPrune(result);
-    result = _stripStopwords(result);
-  }
-
-  // RTK
-  if (level === "rtk" || level === "stacked") {
-    if (_isCommandOutput(result)) {
-      result = _applyRTK(result);
-    }
-  }
-
-  // Stacked: RTK first, then Caveman
-  if (level === "stacked") {
-    result = _applyCaveman(result);
-  }
-
-  // Restore code blocks
-  result = result.replace(/§CB(\d+)§/g, (_, i) => codeBlocks[parseInt(i)] || "");
-  result = result.replace(/§IC(\d+)§/g, (_, i) => inlineCodes[parseInt(i)] || "");
+  // Restore code blocks and inline code
+  result = result.replace(/__TOKC_CB_(\d+)__/g, function(_, i) { return codeBlocks[parseInt(i)] || ""; });
+  result = result.replace(/__TOKC_IC_(\d+)__/g, function(_, i) { return inlineCodes[parseInt(i)] || ""; });
 
   return result;
 }
-
-/**
- * Compress an entire messages array.
- * @param {Array} messages - Array of {role, content, ...} objects
- * @param {'off'|'lite'|'caveman'|'standard'|'aggressive'|'ultra'|'rtk'|'stacked'} level
- * @param {boolean} progressiveAging - Whether to apply progressive message aging
- * @returns {Array} Compressed messages
- */
-export function compressMessages(messages, level = "stacked", progressiveAging = true) {
-  if (!messages?.length || level === "off") return messages;
-
-  let msgs = messages;
-
-  // Delta compression: strip historical VS context blocks, compact consumed tool outputs
-  if (level === "delta") {
-    const beforeLen = JSON.stringify(msgs).length;
-    msgs = compressHistory(msgs, true);
-    if (JSON.stringify(msgs).length < beforeLen) {
-      const saved = beforeLen - JSON.stringify(msgs).length;
-      log(`[delta] history compression saved ~${Math.round(saved / beforeLen * 100)}% (${beforeLen} → ${JSON.stringify(msgs).length} chars)`);
-    }
-    return msgs;
-  }
-
-  // Inject tool history summary before compression — preserves context about what was done
-  if (level !== "off" && level !== "lite") {
-    msgs = _injectToolSummary(msgs);
-  }
-
-  // Drop old tool outputs: keep only the most recent N pairs
-  // Default: 0 = never drop (context preserved until task complete)
-  if (level !== "off") {
-    const envKeep = parseInt(
-      typeof Bun !== "undefined" ? Bun.env.TOOL_OUTPUT_KEEP_COUNT
-      : typeof process !== "undefined" ? process.env.TOOL_OUTPUT_KEEP_COUNT
-      : undefined,
-      10
-    );
-    let keepCount = envKeep > 0 ? envKeep : 0;
-    if (!keepCount) {
-      // Default keep counts per level (env var takes priority)
-      const DEFAULT_KEEP_COUNTS = { ultra: 2, aggressive: 1, stacked: 2, rtk: 3, caveman: 2, standard: 3, lite: 4, delta: 3 };
-      keepCount = DEFAULT_KEEP_COUNTS[level] || 0;
-    }
-    if (keepCount > 0) {
-      const before = msgs.length;
-      msgs = _dropOldToolOutputs(msgs, keepCount);
-      if (msgs.length < before) {
-        const dropped = before - msgs.length;
-        log(`[compress] dropped ${dropped} old tool pair${dropped !== 1 ? "s" : ""} (kept last ${keepCount})`);
-      }
-    }
-  }
-
-  // Progressive aging: reduce older messages more
-  if (progressiveAging && (level === "aggressive" || level === "ultra")) {
-    msgs = _progressiveAging(msgs);
-  }
-
-  return msgs.map((m, idx) => {
-    if (!m.content) return m;
-    const toolRole = m.role === "tool";
-    // Infer tool name from context
-    let toolName = "";
-    if (toolRole && m.tool_call_id) {
-      // Look back for the assistant message with matching tool_calls
-      if (idx > 0) {
-        const prev = msgs[idx - 1];
-        if (prev?.tool_calls?.length) {
-          for (const tc of prev.tool_calls) {
-            if (tc.id === m.tool_call_id || tc.function?.name) {
-              toolName = tc.function?.name || "";
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    let compressed;
-    if (toolRole && level !== "lite" && level !== "off") {
-      // Use the level's own compressor when available; caveman for standard/delta
-      const toolLevel = (level === "rtk" || level === "stacked") ? level :
-                        (level === "aggressive" || level === "ultra") ? level : "caveman";
-      compressed = compressContent(
-        typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-        toolLevel,
-        toolName
-      );
-    } else {
-      compressed = compressContent(
-        typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-        level
-      );
-    }
-
-    return { ...m, content: compressed };
-  });
-}
-
 /**
  * Apply the best compression (Stacked: RTK → Caveman, ~89% average savings on eligible payloads).
  * Shortcut for compressContent(content, "stacked").
@@ -960,66 +772,4 @@ export function compressBest(content, toolName) {
   return compressContent(content, "stacked", toolName);
 }
 
-/**
- * Get estimated token savings percentage for a given compression level.
- */
-export function estimatedSavings(level) {
-  switch (level) {
-    case "off": return 0;
-    case "lite": return 15;
-    case "caveman":
-    case "standard": return 30;
-    case "aggressive": return 50;
-    case "ultra": return 75;
-    case "rtk": return 80;
-    case "stacked": return 89;
-    case "delta": return 80;
-    default: return 0;
-  }
-}
 
-// ── Skill content compression ──
-
-/**
- * Compress a SKILL.md body for injection into the system prompt.
- * Tuned to preserve code examples (the most valuable part) while
- * aggressively shortening verbose prose.
- *
- * @param {string} content — full SKILL.md body (after YAML frontmatter)
- * @returns {string} compressed content
- */
-export function compressSkillContent(content) {
-  if (!content || typeof content !== "string") return content || "";
-
-  let c = content;
-
-  // 1. Strip markdown/HTML comments
-  c = c.replace(/<!--[\s\S]*?-->/g, "");
-
-  // 2. Collapse multiple blank lines
-  c = c.replace(/\n{3,}/g, "\n\n");
-
-  // 3. Truncate long code blocks: keep header + first 30 content lines + footer
-  c = c.replace(/```[\s\S]*?```/g, (match) => {
-    const lines = match.split("\n");
-    if (lines.length > 32) {
-      const fence = lines[0]; // opening ```lang
-      const closeFence = lines[lines.length - 1]; // closing ```
-      return fence + "\n" +
-        lines.slice(1, 31).join("\n") + "\n" +
-        "// ... (" + (lines.length - 32) + " more lines) ...\n" +
-        closeFence;
-    }
-    return match;
-  });
-
-  // 4. Strip redundant section headers that don't add value
-  c = c.replace(/^#{1,3}\s+(Overview|Introduction|Prerequisites|Getting Started|Background)\s*$/gim, "");
-
-  // 5. If still very long, apply caveman-level compression
-  if (c.length > 3000) {
-    c = compressContent(c, "caveman");
-  }
-
-  return c;
-}

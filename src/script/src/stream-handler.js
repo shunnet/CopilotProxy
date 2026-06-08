@@ -8,7 +8,7 @@
 //   - Finish-reason-based tool call flushing (from deepseek-v4-for-copilot core.ts)
 
 import "./polyfill.js";
-import { hasXMLToolCalls, extractToolCalls, normalizeToolCall } from "./tool-extractor.js";
+import { normalizeToolCall } from "./tool-extractor.js";
 
 // ── Thinking display helpers ──
 const _displayReasoning = (process.env.DISPLAY_REASONING || "false").toLowerCase() === "true";
@@ -96,61 +96,3 @@ export function reconstructToolCalls(deltas) {
   return { fullText, reasoningContent, allToolCalls };
 }
 
-// ── XML-aware streaming content accumulator ──
-// Detects XML tool call patterns in real-time during streaming to prevent disconnect.
-// Returns { emit, toolCallsDetected, xmlBuffer } state.
-export function createXMLAwareStreamAccumulator(w, base, vsTools, workspaceRoot, messages) {
-  let fullText = "";
-  let xmlToolCallsDetected = false;
-  let xmlBuffer = "";
-  let emittedXml = false;
-
-  return {
-    get fullText() { return fullText; },
-    get xmlDetected() { return xmlToolCallsDetected; },
-    get xmlEmitted() { return emittedXml; },
-
-    // Add content and check for XML patterns
-    async addContent(content) {
-      if (xmlToolCallsDetected) {
-        xmlBuffer += content;
-        return; // Buffer XML, don't emit as content
-      }
-
-      fullText += content;
-
-      // Check if we've accumulated enough to detect XML tool calls
-      if (hasXMLToolCalls(fullText)) {
-        xmlToolCallsDetected = true;
-        // The text before the XML pattern should have been emitted already
-        // Now buffer the rest
-        const xmlStart = fullText.search(/<tool_call>|<function_calls>/i);
-        if (xmlStart > 0) {
-          // Text before XML was already emitted by the caller
-          xmlBuffer = fullText.slice(xmlStart);
-          fullText = fullText.slice(0, xmlStart);
-        } else {
-          xmlBuffer = fullText;
-          fullText = "";
-        }
-      }
-    },
-
-    // Extract and emit XML tool calls as structured deltas
-    async emitXMLTools() {
-      if (!xmlToolCallsDetected || !xmlBuffer || emittedXml) return { found: false };
-
-      const extracted = extractToolCalls(xmlBuffer, workspaceRoot, messages);
-      if (extracted.toolCalls.length) {
-        // Emit tool calls as structured deltas
-        for (let i = 0; i < extracted.toolCalls.length; i++) {
-          const tc = extracted.toolCalls[i];
-          await w({ ...base, choices: [{ index: 0, delta: { tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: tc.function.arguments } }] }, finish_reason: null }] });
-        }
-        emittedXml = true;
-        return { found: true, toolCalls: extracted.toolCalls, content: extracted.content };
-      }
-      return { found: false };
-    },
-  };
-}

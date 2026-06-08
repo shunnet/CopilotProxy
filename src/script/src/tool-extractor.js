@@ -7,20 +7,64 @@
 //   - Better XML pattern detection for stream disconnect prevention
 //   - Fallback XML parsing for <tool_call> format (MiMo/DeepSeek text output)
 
+import path from "path";
 import "./polyfill.js";
 import { debug } from "./logger.js";
 import { applyToolDefaults, isKnownTool } from "./tool-schemas.js";
 
+// Named constants
+const MIN_FILE_CONTENT_LENGTH = 3;
+const MAX_FILE_CONTENT_LENGTH = 200000;
+const SKIPPED_PROJECT_FILE_EXTENSIONS = /\.(csproj|vbproj|fsproj|jsproj|sln|xproj|dcproj|vcxproj|wsproj|njsproj)$/i;
+
 const _normLog = (msg) => { debug(msg); };
-const callId = () => `call_${crypto.randomUUID().slice(0, 8)}`;
+const callId = () => `call_${crypto.randomUUID().slice(0, 13)}`;
+
+// Sensitive argument redaction for logging
+const SENSITIVE_KEYS = new Set(["command", "oldString", "newString", "old_str", "new_str", "code", "content", "password", "token", "key", "secret"]);
+function _redactSensitive(str) {
+  if (!str || typeof str !== "string") return str;
+    return str.replace(/"([^"]+)":\s*"(?:[^"\\]|\\.)*"/g, (match, key) => {
+    if (SENSITIVE_KEYS.has(key)) return `"${key}": "***"`;
+    return match;
+  });
+}
 
 // Fix JSON.parse damage on path fields: \n → \\n (newline), \t → \\t (tab), \r → \\r
-export function _fixPathEscapes(s) {
+export function fixPathEscapes(s) {
   return s.replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r');
 }
 
 // ── Check if text contains XML tool call patterns ──
 // Used for early detection during streaming to prevent disconnect
+// Pick arg by alias chain
+function _pickArg(args, aliases, defaultVal) {
+  if (defaultVal === undefined) defaultVal = "";
+  for (const alias of aliases) {
+    const v = args[alias];
+    if (v !== undefined && v !== null) return v;
+  }
+  return defaultVal;
+}
+
+// ── Shared brace-counting helper ──
+// Given text and a start position (at an opening brace `{`), find the
+// index of the matching closing brace, accounting for strings and escapes.
+// Returns -1 if no matching brace is found.
+function _findMatchingBrace(text, startPos) {
+  let depth = 1, inStr = false, esc = false;
+  for (let i = startPos + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (esc) { esc = false; continue; }
+    if (ch === "\\") { esc = true; continue; }
+    if (ch === "\"") { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
 export function hasXMLToolCalls(text) {
   if (!text || typeof text !== "string") return false;
   return /<tool_call>|<function_calls>|<\/function>|<\/tool_call>/i.test(text);
@@ -118,30 +162,30 @@ export function normalizeToolCall(tc) {
 
     // ── Tool-specific normalization ──
     if (/^get_file$/i.test(name)) {
-      safe.filename = _fixPathEscapes(String(args.filename ?? args.filePath ?? args.path ?? args.uri ?? args.resource ?? ""));
+      safe.filename = fixPathEscapes(String(_pickArg(args, ["filename", "filePath", "path", "uri", "resource"]) ?? ""));
       safe.startLine = (typeof args.startLine === "number" && args.startLine >= 1) ? args.startLine : 1;
       safe.endLine = (typeof args.endLine === "number" && args.endLine >= 1) ? args.endLine : 0;
       if (typeof args.includeLineNumbers === "boolean") safe.includeLineNumbers = args.includeLineNumbers;
     } else if (/^read_file$/i.test(name)) {
-      safe.filePath = _fixPathEscapes(String(args.filePath ?? args.filename ?? args.path ?? args.uri ?? ""));
+      safe.filePath = fixPathEscapes(String(_pickArg(args, ["filePath", "filename", "path", "uri"]) ?? ""));
       safe.startLine = (typeof args.startLine === "number" && args.startLine >= 1) ? args.startLine : 1;
       safe.endLine = (typeof args.endLine === "number" && args.endLine >= 1) ? args.endLine : 0;
     } else if (/^(grep_search|search_content|search_file)$/i.test(name)) {
-      safe.query = String(args.query ?? args.pattern ?? args.search ?? args.searchTerm ?? "");
+      safe.query = String(_pickArg(args, ["query", "pattern", "search", "searchTerm"]) ?? "");
       safe.isRegexp = (typeof args.isRegexp === "boolean") ? args.isRegexp : (typeof args.regex === "boolean" ? args.regex : false);
       safe.includePattern = args.includePattern ?? args.include ?? args.fileTypes ?? args.glob ?? null;
-      if (safe.includePattern !== null) safe.includePattern = _fixPathEscapes(String(safe.includePattern));
+      if (safe.includePattern !== null) safe.includePattern = fixPathEscapes(String(safe.includePattern));
       safe.maxResults = (typeof args.maxResults === "number" && args.maxResults >= 1) ? args.maxResults : 20;
     } else if (/^replace_string_in_file$/i.test(name)) {
-      safe.filePath = _fixPathEscapes(String(args.filePath ?? args.path ?? args.filename ?? args.file ?? ""));
-      safe.oldString = String(args.oldString ?? args.old_string ?? args.old_str ?? args.search ?? args.old_text ?? "");
-      safe.newString = String(args.newString ?? args.new_string ?? args.new_str ?? args.replace ?? args.new_text ?? "");
+      safe.filePath = fixPathEscapes(String(_pickArg(args, ["filePath", "path", "filename", "file"]) ?? ""));
+      safe.oldString = String(_pickArg(args, ["oldString", "old_string", "old_str", "search", "old_text"]) ?? "");
+      safe.newString = String(_pickArg(args, ["newString", "new_string", "new_str", "replace", "new_text"]) ?? "");
     } else if (/^multi_replace_string_in_file$/i.test(name)) {
-      const list = args.replacements ?? args.edits ?? args.changes ?? args.patches ?? args.operations ?? args.diffs;
+      const list = _pickArg(args, ["replacements", "edits", "changes", "patches", "operations", "diffs"], null);
       if (Array.isArray(list)) {
         safe.replacements = list.map(r => {
           const e = {};
-          e.filePath = _fixPathEscapes(String(r.filePath ?? r.filepath ?? r.path ?? r.filename ?? r.file ?? ""));
+          e.filePath = fixPathEscapes(String(r.filePath ?? r.filepath ?? r.path ?? r.filename ?? r.file ?? ""));
           e.oldString = String(r.oldString ?? r.old_str ?? r.search ?? r.old_text ?? r.find ?? r.from ?? "");
           e.newString = String(r.newString ?? r.new_str ?? r.replace ?? r.new_text ?? r.to ?? "");
           return e;
@@ -153,19 +197,19 @@ export function normalizeToolCall(tc) {
       }
       safe.explanation = String(args.explanation ?? "");
     } else if (/^create_file$/i.test(name)) {
-      safe.filePath = _fixPathEscapes(String(args.filePath ?? args.file_path ?? args.path ?? args.filename ?? "")).replace(/\\/g, "/");
-      safe.content = String(args.content ?? args.contents ?? args.text ?? args.code ?? "");
+      safe.filePath = fixPathEscapes(String(_pickArg(args, ["filePath", "file_path", "path", "filename"]) ?? "")).replace(/\\/g, "/");
+      safe.content = String(_pickArg(args, ["content", "contents", "text", "code"]) ?? "");
       for (const k of Object.keys(args)) {
         if (!(k in safe) && k !== "__proto__" && k !== "constructor" && k !== "prototype") safe[k] = args[k];
       }
     } else if (/^(?:remove_file|delete_files?)$/i.test(name)) {
-      safe.filePath = _fixPathEscapes(String(args.filePath ?? args.path ?? args.filename ?? ""));
+      safe.filePath = fixPathEscapes(String(_pickArg(args, ["filePath", "path", "filename"]) ?? ""));
     } else if (/^(?:run_command_in_terminal|execute_command)$/i.test(name)) {
-      safe.command = String(args.command ?? args.cmd ?? "");
-      safe.summary = String(args.summary ?? args.description ?? "");
+      safe.command = String(_pickArg(args, ["command", "cmd"]) ?? "");
+      safe.summary = String(_pickArg(args, ["summary", "description"]) ?? "");
       safe.background = (typeof args.background === "boolean") ? args.background : (typeof args.runInBackground === "boolean" ? args.runInBackground : false);
     } else if (/^get_background_terminal_output$/i.test(name)) {
-      safe.terminal_id = _fixPathEscapes(String(args.terminal_id ?? args.terminalId ?? args.terminal ?? ""));
+      safe.terminal_id = fixPathEscapes(String(_pickArg(args, ["terminal_id", "terminalId", "terminal"]) ?? ""));
       safe.headLines = (typeof args.headLines === "number") ? args.headLines : 0;
       safe.tailLines = (typeof args.tailLines === "number") ? args.tailLines : 0;
       safe.stop = (typeof args.stop === "boolean") ? args.stop : false;
@@ -184,14 +228,14 @@ export function normalizeToolCall(tc) {
     } else if (/^kill_terminal$/i.test(name)) {
       safe.id = String(args.id ?? args.terminal_id ?? "");
     } else if (/^semantic_search$/i.test(name)) {
-      safe.query = String(args.query ?? args.search ?? "");
+      safe.query = String(_pickArg(args, ["query", "search"]) ?? "");
     } else if (/^fetch_webpage$/i.test(name)) {
       safe.urls = args.urls ?? args.url ?? [];
       if (!Array.isArray(safe.urls)) safe.urls = [String(safe.urls ?? "")];
       safe.query = String(args.query ?? "");
     } else if (/^runSubagent$/i.test(name)) {
-      safe.prompt = String(args.prompt ?? args.task ?? "");
-      safe.description = String(args.description ?? args.desc ?? "");
+      safe.prompt = String(_pickArg(args, ["prompt", "task"]) ?? "");
+      safe.description = String(_pickArg(args, ["description", "desc"]) ?? "");
       if (args.agentName != null) safe.agentName = String(args.agentName);
       if (args.model != null) safe.model = String(args.model);
     } else if (/^manage_todo_list$/i.test(name)) {
@@ -199,7 +243,7 @@ export function normalizeToolCall(tc) {
       if (!Array.isArray(safe.todoList)) safe.todoList = [safe.todoList];
     } else if (/^memory$/i.test(name)) {
       safe.command = String(args.command ?? "");
-      if (args.path != null) safe.path = _fixPathEscapes(String(args.path));
+      if (args.path != null) safe.path = fixPathEscapes(String(args.path));
       if (args.file_text != null) safe.file_text = String(args.file_text);
       if (args.old_str != null) safe.old_str = String(args.old_str);
       if (args.new_str != null) safe.new_str = String(args.new_str);
@@ -209,15 +253,15 @@ export function normalizeToolCall(tc) {
       if (args.old_path != null) safe.old_path = String(args.old_path);
       if (args.new_path != null) safe.new_path = String(args.new_path);
     } else if (/^vscode_listCodeUsages$/i.test(name)) {
-      safe.symbol = String(args.symbol ?? args.symbolName ?? args.query ?? "");
-      safe.lineContent = String(args.lineContent ?? args.line ?? "");
-      if (args.filePath != null) safe.filePath = _fixPathEscapes(String(args.filePath));
+      safe.symbol = String(_pickArg(args, ["symbol", "symbolName", "query"]) ?? "");
+      safe.lineContent = String(_pickArg(args, ["lineContent", "line"]) ?? "");
+      if (args.filePath != null) safe.filePath = fixPathEscapes(String(args.filePath));
       if (args.uri != null) safe.uri = String(args.uri);
     } else if (/^vscode_renameSymbol$/i.test(name)) {
       safe.symbol = String(args.symbol ?? "");
-      safe.newName = String(args.newName ?? args.new_name ?? "");
+      safe.newName = String(_pickArg(args, ["newName", "new_name"]) ?? "");
       safe.lineContent = String(args.lineContent ?? args.line ?? "");
-      if (args.filePath != null) safe.filePath = _fixPathEscapes(String(args.filePath));
+      if (args.filePath != null) safe.filePath = fixPathEscapes(String(args.filePath));
       if (args.uri != null) safe.uri = String(args.uri);
     } else if (/^vscode_askQuestions$/i.test(name)) {
       safe.questions = args.questions ?? args.question ?? [];
@@ -228,8 +272,10 @@ export function normalizeToolCall(tc) {
       if (args.args != null) safe.args = args.args;
       if (typeof args.skipCheck === "boolean") safe.skipCheck = args.skipCheck;
     } else if (/^(create_and_run_task)$/i.test(name)) {
+      const ALLOWED_KEYS = new Set(["steps", "plan", "task", "workspaceFolder", "description", "mode", "subagent_type"]);
       for (const [k, v] of Object.entries(args)) {
-        if (v != null) safe[k] = v;
+        if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+        if (ALLOWED_KEYS.has(k) && v != null) safe[k] = v;
       }
     } else if (/^github_text_search$/i.test(name)) {
       safe.scope = String(args.scope ?? "repo");
@@ -239,27 +285,41 @@ export function normalizeToolCall(tc) {
       safe.repo = String(args.repo ?? "");
       safe.query = String(args.query ?? "");
     } else if (/^(open_browser_page|read_page|navigate_page|click_element|type_in_page|hover_element|drag_element|handle_dialog|screenshot_page|run_playwright_code)$/i.test(name)) {
+      const BROWSER_TOOL_ALLOWLISTS = {
+        open_browser_page: new Set(["url", "browser", "headless", "width", "height", "timeout"]),
+        read_page: new Set(["url", "selector", "timeout"]),
+        navigate_page: new Set(["url", "waitUntil", "timeout"]),
+        click_element: new Set(["selector", "timeout", "button", "clickCount"]),
+        type_in_page: new Set(["selector", "text", "timeout", "clear"]),
+        hover_element: new Set(["selector", "timeout"]),
+        drag_element: new Set(["sourceSelector", "targetSelector", "timeout"]),
+        handle_dialog: new Set(["action", "promptText"]),
+        screenshot_page: new Set(["path", "fullPage", "selector", "quality"]),
+        run_playwright_code: new Set(["code", "timeout"]),
+      };
+      const BROWSER_DEFAULT = new Set(["code", "timeout"]);
+      const allowed = BROWSER_TOOL_ALLOWLISTS[name.toLowerCase()] || BROWSER_DEFAULT;
       for (const [k, v] of Object.entries(args)) {
-        if (v != null) safe[k] = v;
+        if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+        if (allowed.has(k) && v != null) safe[k] = v;
       }
-    } else if (/^lookup_vs$/i.test(name)) {
-      const rawTerms = args.terms ?? args.query ?? args.queries ?? args.search ?? args.searchTerms ?? "";
-      safe.terms = Array.isArray(rawTerms) ? rawTerms.map(String) : [String(rawTerms)];
+      const rawTerms = _pickArg(args, ["terms", "query", "queries", "search", "searchTerms"]);
+      if (rawTerms != null) safe.terms = Array.isArray(rawTerms) ? rawTerms.map(String) : [String(rawTerms)];
     } else {
       // Apply basic normalization for known tools without specific handlers
       if (isKnownTool(name)) {
-        const fixed = _fixPathEscapes(JSON.stringify(args));
+        const fixed = fixPathEscapes(JSON.stringify(args));
         try {
           const parsed = JSON.parse(fixed);
           const withDefaults = applyToolDefaults(name, parsed);
           return { ...tc, function: { ...tc.function, arguments: JSON.stringify(withDefaults) } };
-        } catch { return tc; }
+        } catch (e) { debug(`[tool-extractor] unknown tool parse error: ${e.message?.slice(0, 100)}`); return tc; }
       }
       return tc;
     }
 
     const fixed = JSON.stringify(safe);
-    if (name) _normLog(`\x1b[35m[normalize] ${name} RAW: ${raw} → ${fixed}\x1b[0m`);
+    if (name) _normLog(`\x1b[35m[normalize] ${name} RAW: ${_redactSensitive(raw)} → ${_redactSensitive(fixed)}\x1b[0m`);
     return { ...tc, function: { ...tc.function, arguments: fixed } };
   } catch (e) {
     debug(`\x1b[33m[normalize] ${name} JSON parse failed: ${e.message?.slice(0, 100)}\x1b[0m`);
@@ -291,7 +351,7 @@ function salvageToolCall(name, raw2) {
         const fixed = JSON.stringify(safe);
         return { id: callId(), type: "function", function: { name, arguments: fixed } };
       }
-    } catch {}
+    } catch (e) { debug(`[tool-extractor] salvage1 parse error: ${e.message?.slice(0, 100)}`); }
   }
   if (/^(get_file|read_file)$/i.test(name)) {
     try {
@@ -308,7 +368,7 @@ function salvageToolCall(name, raw2) {
         _normLog(`\x1b[33m[${name}] salvaged ${fpKey}=${safe[fpKey]} startLine=${safe.startLine} endLine=${safe.endLine}\x1b[0m`);
         return { id: callId(), type: "function", function: { name, arguments: JSON.stringify(safe) } };
       }
-    } catch {}
+    } catch (e) { debug(`[tool-extractor] salvage2 parse error: ${e.message?.slice(0, 100)}`); }
   }
   if (/^replace_string_in_file$/i.test(name)) {
     try {
@@ -323,7 +383,7 @@ function salvageToolCall(name, raw2) {
         _normLog(`\x1b[33m[replace_string_in_file] salvaged path=${safe.filePath}\x1b[0m`);
         return { id: callId(), type: "function", function: { name, arguments: JSON.stringify(safe) } };
       }
-    } catch {}
+    } catch (e) { debug(`[tool-extractor] salvage3 parse error: ${e.message?.slice(0, 100)}`); }
   }
   if (/^(run_command_in_terminal|execute_command)$/i.test(name)) {
     try {
@@ -337,7 +397,7 @@ function salvageToolCall(name, raw2) {
         _normLog(`\x1b[33m[${name}] salvaged command="${safe.command.slice(0,60)}"\x1b[0m`);
         return { id: callId(), type: "function", function: { name, arguments: JSON.stringify(safe) } };
       }
-    } catch {}
+    } catch (e) { debug(`[tool-extractor] salvage4 parse error: ${e.message?.slice(0, 100)}`); }
   }
   if (/^(grep_search|search_content|search_file)$/i.test(name)) {
     try {
@@ -358,7 +418,7 @@ function salvageToolCall(name, raw2) {
         _normLog(`\x1b[33m[${name}] salvaged query="${safe.query}"\x1b[0m`);
         return { id: callId(), type: "function", function: { name, arguments: JSON.stringify(safe) } };
       }
-    } catch {}
+    } catch (e) { debug(`[tool-extractor] salvage5 parse error: ${e.message?.slice(0, 100)}`); }
   }
   return null;
 }
@@ -366,13 +426,19 @@ function salvageToolCall(name, raw2) {
 // ── VS Context extraction ──
 export function getWorkspaceRoot(messages) {
   for (const m of messages) {
+    // Only check assistant/system messages — user messages could poison the workspace root
+    if (m.role !== "assistant" && m.role !== "system") continue;
     const c = typeof m.content === "string" ? m.content : "";
+        // Match: "workspace root path is: <path>" (most specific, try first)
     const m2 = c.match(/workspace root path is:\s*(\S+)/i);
     if (m2) return m2[1].replace(/\\+$/, "").replace(/\\/g, "/");
+        // Match: "path to [the] workspace root: <path>"
     const m3 = c.match(/path to (the )?workspace root:?\s*(\S+)/i);
     if (m3) return (m3[2] || m3[1] || "").replace(/\\+$/, "").replace(/\\/g, "/");
+        // Match: <CurrentWorkingDirectory>path</CurrentWorkingDirectory>
     const m4 = c.match(/<CurrentWorkingDirectory>\s*([^<]+)\s*<\/CurrentWorkingDirectory>/i);
     if (m4) return m4[1].trim().replace(/\\/g, "/");
+        // Match: leading Windows path at start of line (e.g., C:\Users\) - broadest, try last
     const m5 = c.match(/^([A-Za-z]:[\\/][^\n]+?)(?:\n|$)/);
     if (m5 && (m5[1].includes("\\") || m5[1].includes("/"))) {
       const p = m5[1].replace(/\\/g, "/");
@@ -409,76 +475,30 @@ export function extractVSContext(messages) {
   };
 }
 
-// ── Main extractor ──
-export function extractToolCalls(text, workspaceRoot = "", messages = []) {
-  if (!text) return { content: text || "", toolCalls: [] };
-  const calls = [];
-  let remaining = text;
+// ── Extraction phase helpers ──
 
-  const vsCtx = workspaceRoot ? { workspace_root: workspaceRoot } : extractVSContext(messages);
+// Phase 0: XML tool_call / function_calls parsing
+function _extractXMLCalls(text) {
+  const calls = parseXMLToolCalls(text).map(tc => normalizeToolCall(tc)).filter(Boolean);
+  return {
+    calls,
+    cleaned: calls.length > 0
+      ? text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "").replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, "")
+      : text
+  };
+}
 
-  // 0. Parse XML tool_call format (MiMo/DeepSeek text output)
-  // FIXED: Added early XML detection for stream disconnect prevention
-  const xmlCalls = parseXMLToolCalls(text);
-  for (const tc of xmlCalls) {
-    const normalized = normalizeToolCall(tc);
-    if (normalized) calls.push(normalized);
-  }
-  if (xmlCalls.length > 0) {
-    // Remove parsed XML blocks from remaining text
-    remaining = remaining.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
-    remaining = remaining.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, "");
-  }
-
-  // 1. Explicit ```tool blocks — brace-counted
-  const toolBlockStartRe = /```tool\n\{/gi;
-  let tb;
-  while ((tb = toolBlockStartRe.exec(text)) !== null) {
-    const jsonStart = tb.index + tb[0].length - 1;
-    let depth = 1, endPos = -1, inStr = false, esc = false;
-    for (let i = jsonStart + 1; i < text.length; i++) {
-      const ch = text[i];
-      if (esc) { esc = false; continue; }
-      if (ch === "\\") { esc = true; continue; }
-      if (ch === "\"") { inStr = !inStr; continue; }
-      if (inStr) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") { depth--; if (depth === 0) { endPos = i; break; } }
-    }
+// Phase 1+2: Brace-delimited tool-call blocks (tool/json language blocks)
+function _extractBraceDelimitedBlocks(text, startRe) {
+  const calls = [], replaced = [];
+  let match;
+  while ((match = startRe.exec(text)) !== null) {
+    const jsonStart = match.index + match[0].length - 1;
+    const endPos = _findMatchingBrace(text, jsonStart);
     if (endPos < 0) continue;
-    toolBlockStartRe.lastIndex = endPos + 1;
+    startRe.lastIndex = endPos + 1;
     const jsonStr = text.slice(jsonStart, endPos + 1);
-    const fullMatch = text.slice(tb.index, endPos + 1);
-    try {
-      const parsed = JSON.parse(jsonStr);
-      const tc = normalizeToolCall({
-        id: callId(), type: "function",
-        function: { name: parsed.name, arguments: JSON.stringify(parsed.arguments || {}) },
-      });
-      if (tc) calls.push(tc);
-      remaining = remaining.replace(fullMatch, "");
-    } catch {}
-  }
-
-  // 2. ```json tool call blocks — brace-counted
-  const jsonBlockStartRe = /```json\s*\n\{/gi;
-  let jb;
-  while ((jb = jsonBlockStartRe.exec(text)) !== null) {
-    const jsonStart = jb.index + jb[0].length - 1;
-    let depth = 1, endPos = -1, inStr = false, esc = false;
-    for (let i = jsonStart + 1; i < text.length; i++) {
-      const ch = text[i];
-      if (esc) { esc = false; continue; }
-      if (ch === "\\") { esc = true; continue; }
-      if (ch === "\"") { inStr = !inStr; continue; }
-      if (inStr) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") { depth--; if (depth === 0) { endPos = i; break; } }
-    }
-    if (endPos < 0) continue;
-    jsonBlockStartRe.lastIndex = endPos + 1;
-    const jsonStr = text.slice(jsonStart, endPos + 1);
-    const fullMatch = text.slice(jb.index, endPos + 1);
+    const fullMatch = text.slice(match.index, endPos + 1);
     try {
       const parsed = JSON.parse(jsonStr);
       if (parsed.name && parsed.arguments) {
@@ -486,33 +506,24 @@ export function extractToolCalls(text, workspaceRoot = "", messages = []) {
           id: callId(), type: "function",
           function: { name: parsed.name, arguments: JSON.stringify(parsed.arguments || {}) },
         });
-        if (tc) { calls.push(tc); remaining = remaining.replace(fullMatch, ""); }
+        if (tc) { calls.push(tc); replaced.push(fullMatch); }
       }
-    } catch {}
+    } catch (e) { debug(`[tool-extractor] brace-delimited parse error: ${e.message?.slice(0, 100)}`); }
   }
+  return { calls, replaced };
+}
 
-  // 3. Inline JSON tool calls — brace-counted
-  const inlineJsonHeadRe = /\{\s*"name"\s*:\s*"(create_file|replace_string_in_file|multi_replace_string_in_file|remove_file|get_file|read_file|grep_search|file_search|find_symbol|search_symbol|run_command_in_terminal|execute_command|replace_in_file|task_complete|start_modernization)"\s*,\s*"arguments"\s*:\s*\{/gi;
-  let ij;
-  while ((ij = inlineJsonHeadRe.exec(text)) !== null) {
-    const fnName = ij[1];
-    const startPos = ij.index;
-    const braceStart = ij.index + ij[0].length - 1;
-    let depth = 1, endPos = -1, inString = false, escape = false;
-    for (let i = braceStart + 1; i < text.length; i++) {
-      const ch = text[i];
-      if (escape) { escape = false; continue; }
-      if (ch === "\\") { escape = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) { endPos = i; break; }
-      }
-    }
+// Phase 3: Inline JSON tool calls like `` `{"name":"...","arguments":{...}}` ``
+function _extractInlineJsonCalls(text) {
+  const calls = [], replaced = [];
+  const HEAD_RE = /\{\s*"name"\s*:\s*"(create_file|replace_string_in_file|multi_replace_string_in_file|remove_file|get_file|read_file|grep_search|file_search|find_symbol|search_symbol|run_command_in_terminal|execute_command|replace_in_file|task_complete|start_modernization)"\s*,\s*"arguments"\s*:\s*\{/gi;
+  let match;
+  while ((match = HEAD_RE.exec(text)) !== null) {
+    const startPos = match.index;
+    const braceStart = match.index + match[0].length - 1;
+    const endPos = _findMatchingBrace(text, braceStart);
     if (endPos < 0) continue;
-    inlineJsonHeadRe.lastIndex = endPos + 1;
+    HEAD_RE.lastIndex = endPos + 1;
     const fullJson = text.slice(startPos, endPos + 1);
     try {
       const parsed = JSON.parse(fullJson);
@@ -521,21 +532,33 @@ export function extractToolCalls(text, workspaceRoot = "", messages = []) {
           id: callId(), type: "function",
           function: { name: parsed.name, arguments: JSON.stringify(parsed.arguments || {}) },
         });
-        if (tc) { calls.push(tc); remaining = remaining.replace(fullJson, ""); }
+        if (tc) { calls.push(tc); replaced.push(fullJson); }
       }
-    } catch {}
+    } catch (e) { debug(`[tool-extractor] inlinejson parse error: ${e.message?.slice(0, 100)}`); }
   }
+  return { calls, replaced };
+}
 
-  // 4. Markdown file creation: ## `path` ```lang\ncontent\n```
-  const createRe = /(?:^|\n)(?:##\s*)?`([^`\n]+\.\w+)`\s*\n```[\w-]*\n([\s\S]*?)```/gi;
-  let m;
-  while ((m = createRe.exec(text)) !== null) {
-    let fp = m[1].replace(/\\/g, "/").trim();
-    const codeContent = m[2].trim();
-    if (!fp || codeContent.length < 3 || codeContent.length > 200000) continue;
-    if (/\.(csproj|vbproj|fsproj|jsproj|sln|xproj|dcproj|vcxproj|wsproj|njsproj)$/i.test(fp)) continue;
+// Phase 4: Markdown file creation patterns
+function _extractMarkdownFileCreations(text, vsCtx) {
+  const calls = [];
+  const CREATE_RE = /(?:^|\n)(?:##\s*)?`([^`\n]+\.\w+)`\s*\n```[\w-]*\n([\s\S]*?)```/gi;
+  let match;
+  while ((match = CREATE_RE.exec(text)) !== null) {
+    let fp = match[1].replace(/\\/g, "/").trim();
+    const codeContent = match[2].trim();
+    if (!fp || codeContent.length < MIN_FILE_CONTENT_LENGTH || codeContent.length > MAX_FILE_CONTENT_LENGTH) continue;
+    if (SKIPPED_PROJECT_FILE_EXTENSIONS.test(fp)) continue;
     if (vsCtx.workspace_root && !/^[A-Za-z]:[/\\]/.test(fp)) {
       fp = vsCtx.workspace_root.replace(/\/$/, "") + "/" + fp;
+      // Path traversal guard
+      const resolved = path.resolve(fp);
+      const wsResolved = path.resolve(vsCtx.workspace_root);
+      const rel = path.relative(wsResolved, resolved);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        debug(`[tool-extractor] blocked path traversal: ${fp}`);
+        continue;
+      }
     }
     const tc = normalizeToolCall({
       id: callId(), type: "function",
@@ -543,6 +566,38 @@ export function extractToolCalls(text, workspaceRoot = "", messages = []) {
     });
     if (tc) calls.push(tc);
   }
+  return calls;
+}
+
+// ── Main extractor ──
+export function extractToolCalls(text, workspaceRoot = "", messages = []) {
+  if (!text) return { content: text || "", toolCalls: [] };
+  let remaining = text;
+  const vsCtx = workspaceRoot ? { workspace_root: workspaceRoot } : extractVSContext(messages);
+
+  // Phase 0: XML tool calls
+  const xmlResult = _extractXMLCalls(remaining);
+  const calls = [...xmlResult.calls];
+  remaining = xmlResult.cleaned;
+
+  // Phase 1: ```tool blocks
+  const toolBlocks = _extractBraceDelimitedBlocks(remaining, /```tool\n\{/gi);
+  calls.push(...toolBlocks.calls);
+  for (const r of toolBlocks.replaced) remaining = remaining.replace(r, "");
+
+  // Phase 2: ```json tool call blocks
+  const jsonBlocks = _extractBraceDelimitedBlocks(remaining, /```json\s*\n\{/gi);
+  calls.push(...jsonBlocks.calls);
+  for (const r of jsonBlocks.replaced) remaining = remaining.replace(r, "");
+
+  // Phase 3: Inline JSON tool calls
+  const inlineCalls = _extractInlineJsonCalls(remaining);
+  calls.push(...inlineCalls.calls);
+  for (const r of inlineCalls.replaced) remaining = remaining.replace(r, "");
+
+  // Phase 4: Markdown file creation
+  const mdCalls = _extractMarkdownFileCreations(text, vsCtx);
+  calls.push(...mdCalls);
 
   if (calls.length === 0) return { content: text, toolCalls: [] };
   return { content: remaining.replace(/\n{3,}/g, "\n\n").trim(), toolCalls: calls };

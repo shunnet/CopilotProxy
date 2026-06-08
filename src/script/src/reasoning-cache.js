@@ -3,7 +3,7 @@
 // Keyed by conversation ID + model + workspace for session isolation.
 // Extracted from server.js.
 
-import { log, debug } from "./logger.js";
+import { log } from "./logger.js";
 import "./polyfill.js";
 
 // Reasoning content cache — bridges across requests within same session
@@ -164,8 +164,10 @@ export function createReasoningContext(messages, model, workspaceRoot, clientTag
       stopCount: 0,
     };
     if (_sessionRegistry) _sessionRegistry.set(conv, sessionEntry);
-    const modelLabel = (model || "").startsWith(`${provider}/`) ? model : `${provider}/${model}`;
-    log(`\x1b[36mnew session ${sessionEntry.id} \x1b[90m(\x1b[0m${clientTag}\x1b[90m, \x1b[0m${modelLabel}\x1b[90m, \x1b[0m${effectiveWorkspace || "?"}\x1b[90m)\x1b[0m`);
+    const modelClean = (model || "").replace(/^(ds|mimo)\//, "").replace(/:latest$/, "");
+    const wsLabel = effectiveWorkspace ? ` - ${effectiveWorkspace}` : "";
+    const tagPart = clientTag ? `[\x1b[35m${clientTag}\x1b[0m] > ` : "";
+    log(`\x1b[36m${tagPart}[ new session ]\x1b[0m ( \x1b[90m${sessionEntry.id}\x1b[0m ) → \x1b[0m${modelClean}${wsLabel}`);
   }
 
   // Update workspace registry
@@ -296,12 +298,3 @@ export function createReasoningContext(messages, model, workspaceRoot, clientTag
   };
 }
 
-// Clear session-scoped cache entries
-export function clearConvReasoning(conv) {
-  const convPrefix = `c:${conv}:`;
-  let cleared = 0;
-  for (const k of _crossReqReasoningCache.keys()) {
-    if (k.startsWith(convPrefix)) { _crossReqReasoningCache.delete(k); cleared++; }
-  }
-  return cleared;
-}

@@ -42,10 +42,9 @@ GitHub Copilot 默认仅支持 OpenAI / Anthropic 等海外模型。对于国内
 <tr><td>📦 <b>提示词压缩</b></td><td>9 级可选（off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard），默认关闭</td></tr>
 <tr><td>💬 <b>会话保活</b></td><td>自动维持 KV Cache，降低 API 费用，日志可见</td></tr>
 <tr><td>⚡ <b>高并发</b></td><td>推理模型 5 并发、标准模型 15 并发，大幅提升响应速度</td></tr>
-<tr><td>📊 <b>Token 用量</b></td><td>每轮对话实时输出 [token] prompt/completion/total 日志</td></tr>
-<tr><td>🌐 <b>透传代理</b></td><td>未匹配路由可转发到自定义上游 API（含 SSRF 防护 + 超时控制）</td></tr>
+<tr><td>📊 <b>Token 用量</b></td><td>请求/响应 Token 合并到完成行，一目了然</td></tr>
 <tr><td>🔧 <b>工具调用</b></td><td>完整的 Function Calling 支持，Schema 自动校验补全，智能 JSON 修复</td></tr>
-<tr><td>🛡️ <b>安全可靠</b></td><td>SSRF 防护、终端命令白名单、API Key 安全存储</td></tr>
+<tr><td>🛡️ <b>安全可靠</b></td><td>API Key 环境变量存储，WPF 密码框掩码</td></tr>
 <tr><td>🔍 <b>版本检测</b></td><td>一键检查 GitHub 最新版本，自动比对提示更新</td></tr>
 </table>
 
@@ -115,12 +114,12 @@ npm run node       # Node.js 备选
 
 | 模型 | 上下文 | 工具调用 | 视觉 | 推理 |
 |------|---------|---------|------|------|
-| 🎯 **MiMo V2.5** | 1M | ✅ | ✅ | ⚡ LOW（响应最快） |
-| 🎯 **MiMo V2.5 Pro** | 1M | ✅ | ✅ | 🧠 MAXIMUM（精准，较慢） |
+| 🎯 **MiMo V2.5** | 1M | ✅ | ❌ | ⚡ LOW（响应最快） |
+| 🎯 **MiMo V2.5 Pro** | 1M | ✅ | ❌ | 🧠 MAXIMUM（精准，较慢） |
 
 ## ⚙️ 配置参数
 
-### 核心配置
+### 🔌 核心配置
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -132,14 +131,14 @@ npm run node       # Node.js 备选
 | `SERVER_HOST` | `127.0.0.1` | 绑定地址 |
 | `SERVER_PORT` | `11434` | 监听端口 |
 
-### 日志与调试
+### 📝 日志与调试
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `REQUEST_LOG` | `true` | 请求日志 |
-| `DEBUG` | 不设置 | 调试模式（设 `true` 或 `1` 开启） |
+| `DEBUG` | `false` | 调试模式（设 `true` 或 `1` 开启） |
 
-### 压缩与性能
+### ⚡ 压缩与性能
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -152,14 +151,14 @@ npm run node       # Node.js 备选
 | `TRUNCATE_TOOL_OUTPUT` | `true` | 工具输出截断 |
 | `MAX_TOOL_OUTPUT_CHARS` | `12000` | 工具输出最大字符数 |
 
-### 模型与上下文
+### 🧠 模型与上下文
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `DEFAULT_CONTEXT_LENGTH` | `131072` | 默认上下文长度（Token） |
-| `DEFAULT_TEMPERATURE` | 留空 | 采样温度（留空 = 模型默认） |
+| `DEFAULT_CONTEXT_LENGTH` | `262144` | 默认上下文长度（Token） |
+| `DEFAULT_TEMPERATURE` | `0.5` | 采样温度（0-2，0.5 平衡创造性与准确性） |
 
-### 会话保活
+### 💬 会话保活
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -168,18 +167,12 @@ npm run node       # Node.js 备选
 | `SESSION_KEEPALIVE_IDLE_TIMEOUT_MS` | `600000` | 保活空闲超时（毫秒） |
 | `SESSION_KEEPALIVE_MAX_LIFETIME_MS` | `86400000` | 保活最大生命周期（毫秒） |
 
-### 语言
+### 🌍 语言
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `SNET_LANGUAGE` | `zh` | 界面语言（zh / en） |
 
-### 透传与安全
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `PASSTHROUGH_BASE_URL` | 留空 | 透传上游地址（留空 = 不启用） |
-| `TERMINAL_FALLBACK_ENABLED` | `false` | 终端命令回退（⚠️ 需信任 AI 客户端） |
 
 ## 🌐 API 端点
 
@@ -232,7 +225,6 @@ npm run node       # Node.js 备选
 │  │  动态推理 · 提示词压缩        │  │
 │  │  会话保活 · 工具调用标准化     │  │
 │  │  Token 日志 · 中英文 i18n   │  │
-│  │  透传代理 · 终端命令回退      │  │
 │  ├───────────────────────────┤  │
 │  │  DeepSeek / MiMo API 适配   │  │
 │  └───────────────────────────┘  │
@@ -291,7 +283,7 @@ CopilotProxy/
 ### 🌍 中英文国际化
 - WPF 切换语言 → 自动同步脚本服务（`POST /api/language`）
 - 启动时通过 `SNET_LANGUAGE` 环境变量预设语言
-- 默认中文，覆盖 156+ 个翻译 Key：服务状态、API 错误、保活、技能、Token 日志、透传等
+- 默认中文，覆盖 70+ 个翻译 Key：服务状态、API 错误、保活、Token 日志、Windows 服务等
 
 ### 🧠 动态推理
 - Pro 模型（v4-pro / v4.5 / MiMo 2.5-pro）自动 HIGH 推理
@@ -312,7 +304,7 @@ CopilotProxy/
 ### 🔄 智能重试
 - 指数退避 + 随机抖动
 - 429 / 502 / 503 / 504 自动重试
-- DeepSeek `reasoning_content` 错误特殊恢复
+- reasoning_content 错误自动处理（无 thinking 模式重试）
 - 并发队列超时保护
 
 ### 🔧 工具调用 Schema 自动补全
@@ -322,7 +314,7 @@ CopilotProxy/
 - 新增工具只需在 Schema 文件加一行，无需手写正则
 
 ### 📊 Token 用量日志
-- 每轮对话自动输出 `[token] request:N response:N total:N`
+- Token 合并到请求完成行：`[request]64595 [response]136 → [12135ms]`
 - 覆盖所有路径：流式/非流式/错误/速率限制
 - 支持中英文格式，跟随语言设置切换
 
@@ -358,6 +350,16 @@ C# 管理工具启动脚本时自动传入 `--plain` 参数与 `SNET_PLAIN=1` �
 <p align="center">
   <img src="image/9.png" alt="完整工作流" width="80%"/>
 </p>
+
+## 📈 Star History
+
+<a href="https://www.star-history.com/?repos=shunnet%2FCopilotProxy&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&legend=top-left" />
+ </picture>
+</a>
 
 <p align="center">
   <sub>Made with ❤️ by <a href="https://shunnet.top">Shunnet.top</a></sub>

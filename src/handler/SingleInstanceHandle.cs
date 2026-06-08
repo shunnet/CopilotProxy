@@ -14,7 +14,7 @@ namespace Snet.CopilotProxy.handler
         private CancellationTokenSource _cts;
         private Task _listenerTask;
 
-        private bool _disposed;
+        private bool _disposed; // accessed only on UI thread — not shared across threads
 
         /// <summary>
         /// 主窗口引用（用于恢复窗口）
@@ -36,11 +36,13 @@ namespace Snet.CopilotProxy.handler
 
             _mutex = new Mutex(true, mutexName, out _isFirstInstance);
             isFirstInstance = _isFirstInstance;
+        }
 
+        /// <summary>Call after RegisterMainWindow to start accepting second-instance wake-ups</summary>
+        public void StartListening()
+        {
             if (_isFirstInstance)
-            {
                 StartPipeListener();
-            }
         }
 
         /// <summary>
@@ -120,7 +122,10 @@ namespace Snet.CopilotProxy.handler
 
             // Task.Factory.StartNew 传入 async 方法会产生 Task<Task>，内层 Task 被丢弃。
             // 使用 Task.Run 可正确展开异步方法返回的 Task。
-            _listenerTask = Task.Run(PipeListenerLoop, _cts.Token);
+            _listenerTask = Task.Run(PipeListenerLoop, _cts.Token).ContinueWith(t => {
+                if (t.IsFaulted && t.Exception != null)
+                    System.Diagnostics.Trace.WriteLine($"Pipe listener faulted: {t.Exception.InnerException?.Message}");
+            }, TaskContinuationOptions.OnlyOnFaulted);
         }
 
         /// <summary>

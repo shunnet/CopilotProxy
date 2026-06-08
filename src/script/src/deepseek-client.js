@@ -41,11 +41,7 @@ export async function getDeepSeekModels() {
     if (!resp.ok) {
       const body = await resp.text().catch(() => "");
       logErr(`[deepseek] /models returned ${resp.status}: ${body.slice(0, 200)}`);
-      // Don't cache auth errors (401/403) — they may resolve when key is fixed.
-      // Network errors and 5xx are also not cached; only cache on success.
-      if (resp.status !== 401 && resp.status !== 403) {
-        _cachedModels = [];
-      }
+      // Don't cache errors — leave _cachedModels null so next call retries
       return [];
     }
     const json = await resp.json();

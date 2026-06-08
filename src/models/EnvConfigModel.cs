@@ -161,14 +161,14 @@ public class EnvConfigModel
     /// </summary>
     [Description("默认上下文长度")]
     [Range(1024, int.MaxValue, ErrorMessage = "上下文长度必须 >= 1024")]
-    public int DefaultContextLength { get; set; } = 131072;
+    public int DefaultContextLength { get; set; } = 262144;
 
     /// <summary>
     /// 默认模型温度（0-2），留空表示不设置，由 API 自行决定
     /// </summary>
-    [Description("默认温度，留空为不设置")]
+    [Description("默认温度（0-2，默认 0.5）")]
     [Range(0, 2, ErrorMessage = "温度必须在 0-2 之间")]
-    public double? DefaultTemperature { get; set; } = null;
+    public double? DefaultTemperature { get; set; } = 0.5;
 
     #endregion
 
@@ -204,25 +204,25 @@ public class EnvConfigModel
 
     #endregion
 
-    #region 透传代理配置
+    #region 扩展配置（仅 JS 侧使用，WPF 不暴露 UI）
 
-    /// <summary>
-    /// 透传代理上游地址 — 未匹配路由转发到此地址
-    /// </summary>
-    [Description("透传上游地址")]
-    [Url(ErrorMessage = "请输入有效的 URL")]
-    public string PassthroughBaseUrl { get; set; } = "";
-
-    #endregion
-
-    #region 安全配置
-
-    /// <summary>
-    /// 终端命令回退 — 开启后 VS 终端不可用时由服务端代为执行命令
-    /// ⚠️ 需要信任 AI 客户端，默认关闭
-    /// </summary>
-    [Description("终端命令回退（⚠️ 信任 AI 客户端时开启）")]
-    public bool TerminalFallbackEnabled { get; set; } = false;
+    /// <summary>保留 WPF 未识别的 .env 键值对，保存时原样写回</summary>
+    [Browsable(false)]
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Dictionary<string, string> ExtraKeys { get; set; } = new();
+    // 以下为 JS 侧使用但 WPF 不暴露 UI 的配置 — 保存时不丢失
+    [Browsable(false)]
+    public bool ForceAllCapabilities { get; set; } = true;
+    [Browsable(false)]
+    public int MessagesPaging { get; set; } = 0;
+    [Browsable(false)]
+    public int RetryBaseDelayMs { get; set; } = 100;
+    [Browsable(false)]
+    public int MaxRequestBodyBytes { get; set; } = 67108864;
+    [Browsable(false)]
+    public int ToolOutputHeadChars { get; set; } = 6000;
+    [Browsable(false)]
+    public int ToolOutputTailChars { get; set; } = 2000;
 
     #endregion
 }

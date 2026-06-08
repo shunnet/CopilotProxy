@@ -25,14 +25,15 @@ namespace Snet.CopilotProxy
 
         #region 构造函数与初始化
 
+        private readonly Task _initTask;
+
         public MainWindowModel()
         {
-            InitAsync().ContinueWith(t =>
-            {
-                if (t.IsFaulted && t.Exception != null)
-                    LogHelper.Error(string.Format(App.LanguageOperate.GetLanguageValue("Error_InitFailed"), t.Exception.InnerException?.Message ?? ""), "Snet.CopilotProxy", t.Exception);
-            }, TaskContinuationOptions.NotOnRanToCompletion);
+            _initTask = InitAsync();
         }
+
+        /// <summary>Await this before accessing properties set by InitAsync</summary>
+        public Task InitCompletion => _initTask;
 
         private async Task InitAsync()
         {
@@ -337,7 +338,17 @@ namespace Snet.CopilotProxy
             _ = CmdHandle.RunAsync(App.StartPath, msg =>
             {
                 _ = ShowAsync(msg);
-            }, cts.Token, p => _runningProcess = p, "--plain", new Dictionary<string, string> { ["SNET_PLAIN"] = "1", ["SNET_LANGUAGE"] = lang });
+            }, cts.Token, p => _runningProcess = p, "--plain", new Dictionary<string, string> { ["SNET_PLAIN"] = "1", ["SNET_LANGUAGE"] = lang },
+            onExit: code =>
+            {
+                _ = ShowAsync($"[Error] 代理服务异常退出 (退出码 {code})");
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    StartIsEnabled = true;
+                    StopIsEnabled = false;
+                    RestartIsEnabled = true;
+                });
+            });
 
             // 等待服务就绪后同步语言（重试最多 10 次，每次间隔递增）
             _ = SyncLanguageWhenReadyAsync(LanguageHandler.GetLanguage(), cts.Token);

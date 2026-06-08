@@ -2,7 +2,6 @@
 // Session registry, workspace continuity, task completion summary, nag detection.
 // Extracted from server.js.
 
-import { log, debug } from "./logger.js";
 import "./polyfill.js";
 
 // Session tracking — detect and number distinct conversation contexts
@@ -12,9 +11,7 @@ export const _workspaceSummaries = new Map();
 export const _taskCompletedSessions = new Map();
 export const _recentlyCompleted = new Map();
 export const _rateLimitedSessions = new Map();
-export let _sessionCounter = 0;
-
-export function setSessionCounter(n) { _sessionCounter = n; }
+let _sessionCounter = 0;
 
 // Periodic cleanup of expired session entries (24h TTL)
 const _SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -36,10 +33,6 @@ setInterval(() => {
     if (v.at < cutoff) _rateLimitedSessions.delete(k);
   }
 }, 10 * 60 * 1000).unref();
-
-export function sessionLog(prefix, msg) {
-  log(`${prefix} ${msg}`);
-}
 
 // ── Task completion summary ──
 export function _summarizeCompletedTask(messages) {

@@ -40,17 +40,27 @@ export function _toolNames(messages) {
 // Prevents DeepSeek/MiMo validation errors in both directions.
 // FIXED: Uses explicit index tracking instead of result.indexOf(m)
 // FIXED: Relaxed break condition for tool message matching
-export function _stripOrphanedToolCalls(messages) {
-  if (!messages?.length) return { messages, stripped: 0 };
-  let stripped = 0;
+function _findMatchingAssistant(messages, idx) {
+  for (let j = idx - 1; j >= 0; j--) {
+    const prev = messages[j];
+    if (prev.role === "assistant" && prev.tool_calls?.length) {
+      if (prev.tool_calls.some(tc => tc.id === messages[idx].tool_call_id)) {
+        return true;
+      }
+      return false;
+    }
+    if (prev.role === "user" || prev.role === "system") break;
+  }
+  return false;
+}
 
-  // First pass: strip orphaned tool_calls from assistant messages
-  let result = messages.map(m => {
+function _stripOrphanedAssistantToolCalls(messages) {
+  let stripped = 0;
+  const result = messages.map(m => {
     if (m.role !== "assistant" || !m.tool_calls?.length) return m;
 
     const callIds = m.tool_calls.map(tc => tc.id);
     const matched = new Set();
-    // Scan forward from this assistant for matching tool results
     const asstIdx = messages.indexOf(m);
     for (let j = asstIdx + 1; j < messages.length; j++) {
       const t = messages[j];
@@ -60,12 +70,10 @@ export function _stripOrphanedToolCalls(messages) {
     }
 
     if (matched.size === 0) {
-      // All tool calls are orphaned — strip them entirely
       stripped++;
       const { tool_calls, ...rest } = m;
       return { ...rest, content: m.content || "" };
     } else if (matched.size < callIds.length) {
-      // Some tool calls have results, some don't — keep only the matched ones
       stripped++;
       const names = m.tool_calls.filter(tc => !matched.has(tc.id)).map(tc => tc.function?.name || "?");
       log(`  [tool] stripping ${callIds.length - matched.size} orphaned tool calls: ${names.join(", ")}`);
@@ -74,40 +82,43 @@ export function _stripOrphanedToolCalls(messages) {
 
     return m;
   });
+  return { result, stripped };
+}
 
-  // Second pass: strip orphaned tool messages that have no matching assistant with tool_calls
-  // FIXED: Use explicit index tracking via closure instead of result.indexOf(m)
-  // FIXED: Relaxed break — only stop on user/system boundaries, not on non-tool messages
+function _stripOrphanedToolMessages(result) {
   const before = result.length;
   const filtered = [];
+  let stripped = 0;
   for (let idx = 0; idx < result.length; idx++) {
     const m = result[idx];
     if (m.role !== "tool") {
       filtered.push(m);
       continue;
     }
-    // Walk backwards to find a preceding assistant with matching tool_calls
-    let found = false;
-    for (let j = idx - 1; j >= 0; j--) {
-      const prev = result[j];
-      if (prev.role === "assistant" && prev.tool_calls?.length) {
-        if (prev.tool_calls.some(tc => tc.id === m.tool_call_id)) {
-          found = true;
-        }
-        break; // stop at first assistant (matched or not)
-      }
-      // FIXED: Only break on user/system — allow tool/assistant gaps
-      if (prev.role === "user" || prev.role === "system") break;
-    }
-    if (!found) {
+    if (_findMatchingAssistant(result, idx)) {
+      filtered.push(m);
+    } else {
       stripped++;
-      continue;
     }
-    filtered.push(m);
   }
-  result = filtered;
-  const orphanedTools = before - result.length;
+  const orphanedTools = before - filtered.length;
   if (orphanedTools) debug(`  [tool] stripped ${orphanedTools} orphaned tool message${orphanedTools !== 1 ? "s" : ""}`);
+  return { result: filtered, stripped };
+}
+
+export function _stripOrphanedToolCalls(messages) {
+  if (!messages?.length) return { messages, stripped: 0 };
+  let stripped = 0;
+
+  // First pass: strip orphaned assistant tool calls
+  const firstPass = _stripOrphanedAssistantToolCalls(messages);
+  let result = firstPass.result;
+  stripped += firstPass.stripped;
+
+  // Second pass: strip orphaned tool messages
+  const secondPass = _stripOrphanedToolMessages(result);
+  result = secondPass.result;
+  stripped += secondPass.stripped;
 
   if (stripped) debug(`  [tool] stripped orphaned tool calls/messages from ${stripped} total`);
   return { messages: result, stripped };
@@ -147,39 +158,3 @@ export function checkOrphanToolMessage(userMsgs, m, clientTag) {
   return { drop: false };
 }
 
-// ── Message validation ──
-const VALID_ROLES = new Set(["system", "user", "assistant", "tool"]);
-
-export function validateMessages(messages) {
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    if (!m || typeof m !== "object") {
-      return { valid: false, error: `message ${i} must be an object` };
-    }
-    const role = ((m.role || "").toString()).toLowerCase().trim();
-    if (!role) {
-      return { valid: false, error: `message ${i} requires a role` };
-    }
-    if (!VALID_ROLES.has(role)) {
-      return { valid: false, error: `message ${i} has invalid role: ${role}` };
-    }
-  }
-  return { valid: true };
-}
-
-// ── Merge consecutive same-role messages ──
-// DeepSeek/MiMo reject consecutive user/user or system/system messages
-export function mergeConsecutiveMessages(msgs) {
-  const merged = [];
-  for (const m of msgs) {
-    const last = merged.length > 0 ? merged[merged.length - 1] : null;
-    if (last && last.role === m.role && (m.role === "user" || m.role === "system")) {
-      const lastContent = typeof last.content === "string" ? last.content : "";
-      const mContent = typeof m.content === "string" ? m.content : "";
-      merged[merged.length - 1] = { ...last, content: lastContent + "\n\n" + mContent };
-    } else {
-      merged.push({ ...m });
-    }
-  }
-  return merged;
-}

@@ -6,13 +6,13 @@ const MIMO_BASE_URL = (typeof Bun !== "undefined" ? Bun.env.MIMO_BASE_URL : proc
 
 // 检查是否已配置 MiMo API Key
 export function isMiMoAvailable() {
-  const key = Bun.env.MIMO_API_KEY;
+  const key = process.env.MIMO_API_KEY || Bun.env?.MIMO_API_KEY;
   return !!(key && key.trim());
 }
 
 // 获取 MiMo API Key
 export function getMiMoApiKey() {
-  return Bun.env.MIMO_API_KEY || "";
+  return process.env.MIMO_API_KEY || Bun.env?.MIMO_API_KEY || "";
 }
 
 // 构建认证头（MiMo 支持两种方式）
@@ -52,9 +52,7 @@ export async function getMiMoModels() {
       logErr(`[mimo] /models 请求失败 ${resp.status}: ${body.slice(0, 200)}`);
       // Don't cache auth errors (401/403) — they may resolve when key is fixed.
       // Network errors and 5xx are also not cached; only cache on success.
-      if (resp.status !== 401 && resp.status !== 403) {
-        _cachedModels = [];
-      }
+      // Don't cache on error — leave empty so next call retries
       return [];
     }
 

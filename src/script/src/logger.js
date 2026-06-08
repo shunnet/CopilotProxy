@@ -2,6 +2,9 @@ import "./polyfill.js";
 import { t } from "./i18n.js";
 
 const ts = () => new Date().toLocaleTimeString("en-US", { hour12: false });
+let _plainMode = false;
+function setPlainMode(v) { _plainMode = v; }
+function _strip(s) { return _plainMode ? s.replace(/\x1b\[[0-9;]*m/g, "") : s; }
 
 let _bannerCollapsed = [];
 let _bannerExpanded = [];
@@ -227,6 +230,8 @@ function _redraw() {
 function log(msg) {
   if (_dashboard) {
     _pushToBuffer(msg, false);
+  } else if (_plainMode) {
+    process.stdout.write(`${ts()} ${_strip(msg)}\n`);
   } else {
     process.stdout.write(`\x1b[90m${ts()}\x1b[0m ${msg}\n`);
   }
@@ -257,7 +262,8 @@ function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId })
   const tagPart = tag ? `[\x1b[35m${tag}\x1b[0m]` : "";
   const sessionPart = sessionId ? `[\x1b[36m${sessionId}\x1b[0m]` : "";
   const thinkPart = thinking ? `[\x1b[36m${thinking}\x1b[0m]` : "";
-  const provModel = `[\x1b[0m${provider}/\x1b[1m${model || "?"}\x1b[0m]`;
+  const modelClean = (model || "?").replace(/^(ds|mimo)\//, "").replace(/:latest$/, "");
+  const provModel = `[\x1b[0m${provider}/\x1b[1m${modelClean}\x1b[0m]`;
   const prefix = `${tagPart}${sessionPart}>${thinkPart}${provModel}`;
   const prefixLen = _visLen(prefix);
 
@@ -294,21 +300,28 @@ function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId })
     return;
   }
 
-  const initSuffix = "\u2014 \u2026 ";
-  const initLine = `\x1b[90m${ts()}\x1b[0m ${prefix}${trail}${initSuffix}`;
-  if (!_dashboard) process.stdout.write(initLine);
+  if (!_dashboard && !_plainMode) {
+    const initSuffix = "\u2014 \u2026 ";
+    const initLine = `\x1b[90m${ts()}\x1b[0m ${prefix}${trail}${initSuffix}`;
+    process.stdout.write(initLine);
+  }
 
-  return (elapsed) => {
-    const msg = `${prefix}${trail} \x1b[32m→\x1b[0m [${elapsed}ms]`;
+  return (elapsed, usage) => {
+    const tok = usage ? ` [request]${usage.prompt_tokens} [response]${usage.completion_tokens}` : "";
+    const msg = `${prefix}${tok}${trail} \x1b[32m→\x1b[0m [${elapsed}ms]`;
     if (_dashboard) {
       _pushToBuffer(msg, false);
+    } else if (_plainMode) {
+      // WPF plain mode: single clean line, no ANSI, no init line
+      process.stdout.write(`${ts()} ${_strip(prefix)}${tok}${_strip(trail)} → [${elapsed}ms]\n`);
+    } else {
+      process.stdout.write(`\r${initLine}${tok}\x1b[32m→\x1b[0m [${elapsed}ms]\n`);
     }
-    else { process.stdout.write(`\r${initLine}\x1b[32m→\x1b[0m [${elapsed}ms]\n`); }
   };
 }
 
 function redrawBanner() { if (_dashboard) _redraw(); }
-export { log, warn, error, debug, reqLog, enableDashboard, disableDashboard, onCommand, redrawBanner, setBoxWidth };
+export { log, warn, error, debug, reqLog, enableDashboard, disableDashboard, onCommand, redrawBanner, setBoxWidth, setPlainMode };
 
 function collapseBanner() {
   if (!_dashboard || _collapsed) return;
@@ -320,14 +333,4 @@ function collapseBanner() {
   _redraw();
 }
 
-function expandBanner() {
-  if (!_dashboard || !_collapsed) return;
-  process.stdout.write("\x1b[?1049l");
-  _collapsed = false;
-  _banner = _bannerExpanded;
-  _scrollMode = false;
-  _scrollOffset = 0;
-  _redraw();
-}
-
-export { collapseBanner, expandBanner };
+export { collapseBanner };
