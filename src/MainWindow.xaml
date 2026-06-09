@@ -15,6 +15,7 @@
     Width="1000"
     Height="700"
     MinWidth="1000"
+    MinHeight="700"
     snet:ResxLocalizationProvider.DefaultAssembly="Snet.CopilotProxy"
     snet:ResxLocalizationProvider.DefaultDictionary="Language"
     Icon="/icon.ico"
