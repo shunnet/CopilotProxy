@@ -215,12 +215,10 @@ namespace Snet.CopilotProxy
 
             var exitCode = await CmdHandle.RunAsync(App.BuildPath, msg =>
             {
-                _ = ShowAsync(msg);
+                Application.Current.Dispatcher.BeginInvoke(() => _ = ShowAsync(msg));
             }, cts.Token, p => _buildProcess = p);
 
-            await ShowAsync(exitCode == 0
-                ? App.LanguageOperate.GetLanguageValue("Info_BuildCompleted")
-                : string.Format(App.LanguageOperate.GetLanguageValue("Error_BuildFailed"), exitCode));
+            await ShowAsync(exitCode == 0 ? App.LanguageOperate.GetLanguageValue("Info_BuildCompleted") : string.Format(App.LanguageOperate.GetLanguageValue("Error_BuildFailed"), exitCode));
 
             if (exitCode == 0 && Directory.Exists(App.DistPath))
             {
@@ -337,7 +335,7 @@ namespace Snet.CopilotProxy
             var lang = LanguageHandler.GetLanguage() == Model.@enum.LanguageType.en ? "en" : "zh";
             _ = CmdHandle.RunAsync(App.StartPath, msg =>
             {
-                _ = ShowAsync(msg);
+                Application.Current.Dispatcher.BeginInvoke(() => _ = ShowAsync(msg));
             }, cts.Token, p => _runningProcess = p, "--plain", new Dictionary<string, string> { ["SNET_PLAIN"] = "1", ["SNET_LANGUAGE"] = lang },
             onExit: code =>
             {

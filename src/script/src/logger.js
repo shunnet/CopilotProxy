@@ -260,11 +260,11 @@ function debug(msg) {
 
 function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId }) {
   const tagPart = tag ? `[\x1b[35m${tag}\x1b[0m]` : "";
-  const sessionPart = sessionId ? `[\x1b[36m${sessionId}\x1b[0m]` : "";
+  const sessionPart = sessionId ? `\x1b[90m[ session ]\x1b[0m ( \x1b[36m${sessionId}\x1b[0m )` : "";
   const thinkPart = thinking ? `[\x1b[36m${thinking}\x1b[0m]` : "";
   const modelClean = (model || "?").replace(/^(ds|mimo)\//, "").replace(/:latest$/, "");
   const provModel = `[\x1b[0m${provider}/\x1b[1m${modelClean}\x1b[0m]`;
-  const prefix = `${tagPart}${sessionPart}>${thinkPart}${provModel}`;
+  const prefix = `${tagPart}> ${sessionPart}${thinkPart}${provModel}`;
   const prefixLen = _visLen(prefix);
 
   // Max suffix length: " → [XXXXXms]" — reserve worst-case space

@@ -193,6 +193,7 @@ export function createReasoningContext(messages, model, workspaceRoot, clientTag
 
   return {
     conv,
+    sessionId: sessionEntry.id,
     sessionEntry,
     isNew: !_sessionRegistry || !_sessionRegistry.get(conv) ? true : false,
     sessionPrefix,

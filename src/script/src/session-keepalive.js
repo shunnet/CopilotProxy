@@ -25,6 +25,7 @@ const KEEPALIVE_MAX_LIFETIME_MS = Math.max(3600000, parseInt(_env("SESSION_KEEPA
 const _sessions = new Map();
 let _totalPings = 0;
 
+
 function getProvider(model) {
   if (isDeepSeekModel(model)) return "deepseek";
   if (isMiMoModel(model)) return "mimo";
@@ -49,32 +50,39 @@ function _pingMessages(messages) {
 function scheduleKeepalive(sessionId) {
   const entry = _sessions.get(sessionId);
   if (!entry) return;
+  if (entry._timer) return;
 
-  if (entry.timer) clearTimeout(entry.timer);
+  entry._timer = setInterval(() => {
+    try {
+      const e = _sessions.get(sessionId);
+      if (!e) { clearInterval(entry._timer); return; }
 
-  entry.timer = setTimeout(() => doKeepalive(sessionId).catch(e => log(`[keepalive] error in doKeepalive: ${e.message}`)), KEEPALIVE_INTERVAL_MS);
-  entry.timer.unref?.();
+      const m = (e.model || "?").replace(/^(ds|mimo)\//, "").replace(/:latest$/, "");
+      log(`\x1b[35m[${e.clientTag || "?"}]\x1b[0m > \x1b[90m[ session ]\x1b[0m ( \x1b[36m${sessionId}\x1b[0m ) \x1b[90m[ keepalive ]\x1b[0m → \x1b[0m${m}`);
+
+      const idleMs = Date.now() - e.lastActivity;
+      if (idleMs >= KEEPALIVE_IDLE_TIMEOUT_MS) {
+        log(`${t("keepaliveIdle", sessionId, Math.round(idleMs / 1000), e.pingCount || 0)}`);
+        clearInterval(entry._timer);
+        _sessions.delete(sessionId);
+        return;
+      }
+
+      const ageMs = Date.now() - (e.createdAt || Date.now());
+      if (ageMs >= KEEPALIVE_MAX_LIFETIME_MS) {
+        log(`${t("keepaliveLifetime", sessionId, Math.round(ageMs / 3600000))}`);
+        clearInterval(entry._timer);
+        _sessions.delete(sessionId);
+        return;
+      }
+
+      doKeepalive(sessionId, entry).catch(err => log(`[keepalive] error: ${err.message}`));
+    } catch (ex) { log(`[keepalive] heartbeat error: ${ex.message}`); }
+  }, KEEPALIVE_INTERVAL_MS);
 }
 
-async function doKeepalive(sessionId) {
-  const entry = _sessions.get(sessionId);
+async function doKeepalive(sessionId, entry) {
   if (!entry) return;
-
-  const idleMs = Date.now() - entry.lastActivity;
-  if (idleMs >= KEEPALIVE_IDLE_TIMEOUT_MS) {
-    log(`${t("keepaliveIdle", sessionId, Math.round(idleMs / 1000), entry.pingCount || 0)}`);
-    if (entry.timer) clearTimeout(entry.timer);
-    _sessions.delete(sessionId);
-    return;
-  }
-
-  const ageMs = Date.now() - (entry.createdAt || Date.now());
-  if (ageMs >= KEEPALIVE_MAX_LIFETIME_MS) {
-    log(`${t("keepaliveLifetime", sessionId, Math.round(ageMs / 3600000))}`);
-    if (entry.timer) clearTimeout(entry.timer);
-    _sessions.delete(sessionId);
-    return;
-  }
 
   try {
     const gen = chatCompletion({
@@ -85,24 +93,19 @@ async function doKeepalive(sessionId) {
       options: { num_predict: 1 },
       _noTimeout: true,
       _noDefaults: true,
+      _noLog: true,
     });
 
     for await (const chunk of gen) {
       if (chunk.done && chunk.done_reason !== "error") {
         entry.pingCount = (entry.pingCount || 0) + 1;
         _totalPings++;
-        log(`${t("keepalivePingOk", sessionId, entry.pingCount, entry.provider, entry.model, Math.round(idleMs / 1000))}`);
       }
     }
   } catch (e) {
     log(`${t("keepalivePingFail", sessionId, e.message)}`);
-    if (entry.timer) clearTimeout(entry.timer);
+    if (entry._timer) clearInterval(entry._timer);
     _sessions.delete(sessionId);
-    return;
-  }
-
-  if (_sessions.has(sessionId)) {
-    scheduleKeepalive(sessionId);
   }
 }
 
@@ -112,7 +115,7 @@ const _cleanupTimer = setInterval(() => {
   for (const [sid, entry] of _sessions) {
     const idleMs = now - entry.lastActivity;
     if (idleMs > KEEPALIVE_IDLE_TIMEOUT_MS * 2) {
-      if (entry.timer) clearTimeout(entry.timer);
+      if (entry._timer) clearInterval(entry._timer);
       _sessions.delete(sid);
       log(`[keepalive] cleaned orphaned session ${sid} (idle ${Math.round(idleMs / 1000)}s)`);
     }
@@ -136,7 +139,7 @@ export function trackSession(sessionId, model, messages, clientTag) {
     provider,
     lastActivity: Date.now(),
     createdAt: existing?.createdAt || Date.now(),
-    timer: existing?.timer || null,
+    _timer: existing?._timer || null,
     pingCount: existing?.pingCount || 0,
   });
 
@@ -147,7 +150,7 @@ export function shutdown() {
   let count = 0;
   clearInterval(_cleanupTimer);
   for (const [sessionId, entry] of _sessions) {
-    if (entry.timer) clearTimeout(entry.timer);
+    if (entry._timer) clearInterval(entry._timer);
     count++;
   }
   _sessions.clear();

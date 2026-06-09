@@ -117,63 +117,6 @@ npm run node       # Node.js 备选
 | 🎯 **MiMo V2.5** | 1M | ✅ | ❌ | ⚡ LOW（响应最快） |
 | 🎯 **MiMo V2.5 Pro** | 1M | ✅ | ❌ | 🧠 MAXIMUM（精准，较慢） |
 
-## ⚙️ 配置参数
-
-### 🔌 核心配置
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek API 地址 |
-| `MIMO_BASE_URL` | `https://api.xiaomimimo.com/v1` | MiMo API 地址 |
-| `DEEPSEEK_API_KEY` | — | DeepSeek API Key |
-| `MIMO_API_KEY` | — | MiMo API Key |
-| `DEFAULT_MODEL` | `ds/deepseek-v4-pro` | 默认模型 |
-| `SERVER_HOST` | `127.0.0.1` | 绑定地址 |
-| `SERVER_PORT` | `11434` | 监听端口 |
-
-### 📝 日志与调试
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `REQUEST_LOG` | `true` | 请求日志 |
-| `DEBUG` | `false` | 调试模式（设 `true` 或 `1` 开启） |
-
-### ⚡ 压缩与性能
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `COMPRESSION_LEVEL` | `off` | 压缩级别（off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard） |
-| `CONCURRENCY_THINKING` | `5` | 推理模型最大并发 |
-| `CONCURRENCY_STANDARD` | `15` | 标准模型最大并发 |
-| `RETRY_MAX` | `3` | 429 错误重试次数 |
-| `THINKING_TIMEOUT_MS` | `300000` | 推理模型超时（毫秒） |
-| `REQUEST_TIMEOUT_MS` | `300000` | 请求超时（毫秒） |
-| `TRUNCATE_TOOL_OUTPUT` | `true` | 工具输出截断 |
-| `MAX_TOOL_OUTPUT_CHARS` | `12000` | 工具输出最大字符数 |
-
-### 🧠 模型与上下文
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `DEFAULT_CONTEXT_LENGTH` | `262144` | 默认上下文长度（Token） |
-| `DEFAULT_TEMPERATURE` | `0.5` | 采样温度（0-2，0.5 平衡创造性与准确性） |
-
-### 💬 会话保活
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `SESSION_KEEPALIVE_ENABLED` | `true` | 会话保活开关 |
-| `SESSION_KEEPALIVE_INTERVAL_MS` | `120000` | 保活 Ping 间隔（毫秒） |
-| `SESSION_KEEPALIVE_IDLE_TIMEOUT_MS` | `600000` | 保活空闲超时（毫秒） |
-| `SESSION_KEEPALIVE_MAX_LIFETIME_MS` | `86400000` | 保活最大生命周期（毫秒） |
-
-### 🌍 语言
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `SNET_LANGUAGE` | `zh` | 界面语言（zh / en） |
-
-
 ## 🌐 API 端点
 
 | 端点 | 方法 | 说明 |

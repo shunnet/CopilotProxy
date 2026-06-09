@@ -77,84 +77,85 @@ namespace Snet.CopilotProxy
         private static List<EditModel> GetEditModels() =>
         [
             // ── Token 用量 — 绿色系 ──
-            new() { Name = "[request]",              Color = "#43A047" },
-            new() { Name = "[response]",             Color = "#43A047" },
+            new() { Name = "[request]",              Color = "#81C784" },
+            new() { Name = "[response]",             Color = "#66BB6A" },
 
-            // ── 成功/状态 — 绿色系（白天深绿 #2E7D32，兼容暗黑） ──
-            new() { Name = "[ Info ]",              Color = "#2E7D32" },
-            new() { Name = "[INFO]",                Color = "#2E7D32" },
-            new() { Name = "[model]",               Color = "#2E7D32" },
-            new() { Name = "[status]",              Color = "#2E7D32" },
-            new() { Name = "[i18n]",                Color = "#2E7D32" },
-            new() { Name = "[generic]",                Color = "#2E7D32" },
-            new() { Name = "TRUE",                  Color = "#2E7D32" },
-            new() { Name = "Build successful",      Color = "#2E7D32" },
+            // ── 成功/状态 — 绿色系 ──
+            new() { Name = "[ Info ]",              Color = "#81C784" },
+            new() { Name = "[INFO]",                Color = "#81C784" },
+            new() { Name = "[model]",               Color = "#81C784" },
+            new() { Name = "[status]",              Color = "#81C784" },
+            new() { Name = "[i18n]",                Color = "#81C784" },
+            new() { Name = "[generic]",             Color = "#81C784" },
+            new() { Name = "TRUE",                  Color = "#81C784" },
+            new() { Name = "Build successful",      Color = "#81C784" },
 
             // ── 模型/服务名 — 青色系 ──
-            new() { Name = "DeepSeek",              Color = "#0288D1" },
-            new() { Name = "deepseek",              Color = "#0288D1" },
-            new() { Name = "MiMo",                  Color = "#00838F" },
-            new() { Name = "mimo",                  Color = "#00838F" },
-            new() { Name = "[ Shunnet.top ]",       Color = "#1565C0" },
-            new() { Name = "[Shunnet.top]",          Color = "#1565C0" },
+            new() { Name = "DeepSeek",              Color = "#29B6F6" },
+            new() { Name = "deepseek",              Color = "#29B6F6" },
+            new() { Name = "MiMo",                  Color = "#26C6DA" },
+            new() { Name = "mimo",                  Color = "#26C6DA" },
+            new() { Name = "[ Shunnet.top ]",       Color = "#42A5F5" },
+            new() { Name = "[Shunnet.top]",         Color = "#42A5F5" },
 
-            // ── 错误/失败 — 红色系（白天深红 #C62828） ──
-            new() { Name = "[ Error ]",             Color = "#C62828" },
-            new() { Name = "Error",                 Color = "#C62828" },
-            new() { Name = "错误",                  Color = "#C62828" },
-            new() { Name = "异常",                  Color = "#C62828" },
-            new() { Name = "Exception",             Color = "#C62828" },
-            new() { Name = "[FATAL]",               Color = "#C62828" },
-            new() { Name = "FALSE",                 Color = "#C62828" },
+            // ── 错误/失败 — 红色系 ──
+            new() { Name = "[ Error ]",             Color = "#EF5350" },
+            new() { Name = "Error",                 Color = "#EF5350" },
+            new() { Name = "错误",                  Color = "#EF5350" },
+            new() { Name = "异常",                  Color = "#EF5350" },
+            new() { Name = "Exception",             Color = "#EF5350" },
+            new() { Name = "[FATAL]",               Color = "#EF5350" },
+            new() { Name = "FALSE",                 Color = "#EF5350" },
 
             // ── API/网络错误 — 暗红色 ──
-            new() { Name = "[chat]",                Color = "#D32F2F" },
-            new() { Name = "[404]",                 Color = "#D32F2F" },
+            new() { Name = "[chat]",                Color = "#E53935" },
+            new() { Name = "[404]",                 Color = "#E53935" },
 
             // ── 会话/保活 — 蓝色系 ──
-            new() { Name = "[session]",             Color = "#1565C0" },
-            new() { Name = "[ new session ]",       Color = "#1976D2" },
-            new() { Name = "[keepalive]",           Color = "#1565C0" },
-            new() { Name = "[保活]",                Color = "#1565C0" },
-            new() { Name = "[continuity]",          Color = "#1565C0" },
+            new() { Name = "[ session ]",           Color = "#42A5F5" },
+            new() { Name = "[session]",             Color = "#42A5F5" },
+            new() { Name = "[ new session ]",       Color = "#42A5F5" },
+            new() { Name = "[ keepalive ]",         Color = "#26C6DA" },
+            new() { Name = "[keepalive]",           Color = "#26C6DA" },
+            new() { Name = "[保活]",                Color = "#26C6DA" },
 
-            // ── 推理级别 — 紫色系（显眼但柔和） ──
-            new() { Name = "[HIGH]",                Color = "#7B1FA2" },
-            new() { Name = "[MEDIUM]",              Color = "#7B1FA2" },
-            new() { Name = "[LOW]",                 Color = "#7B1FA2" },
-            new() { Name = "[MAXIMUM]",             Color = "#7B1FA2" },
+            // ── 推理级别 — 紫色系 ──
+            new() { Name = "[HIGH]",                Color = "#AB47BC" },
+            new() { Name = "[MEDIUM]",              Color = "#AB47BC" },
+            new() { Name = "[LOW]",                 Color = "#AB47BC" },
+            new() { Name = "[MAXIMUM]",             Color = "#AB47BC" },
 
             // ── 工具/Stream — 青色 ──
-            new() { Name = "[tool]",                Color = "#00838F" },
-            new() { Name = "[stream]",              Color = "#00838F" },
+            new() { Name = "[tool]",                Color = "#26C6DA" },
+            new() { Name = "[stream]",              Color = "#26C6DA" },
 
             // ── 调试/诊断 — 灰色系 ──
-            new() { Name = "[debug]",               Color = "#616161" },
-            new() { Name = "[config]",              Color = "#616161" },
-            new() { Name = "[context]",             Color = "#616161" },
-            new() { Name = "[paging]",              Color = "#616161" },
-            new() { Name = "[cache]",               Color = "#616161" },
-            new() { Name = "[tracker]",             Color = "#616161" },
+            new() { Name = "[debug]",               Color = "#BDBDBD" },
+            new() { Name = "[config]",              Color = "#BDBDBD" },
+            new() { Name = "[context]",             Color = "#BDBDBD" },
+            new() { Name = "[paging]",              Color = "#BDBDBD" },
+            new() { Name = "[cache]",               Color = "#BDBDBD" },
+            new() { Name = "[tracker]",             Color = "#BDBDBD" },
 
             // ── 压缩/优化 — 棕色系 ──
-            new() { Name = "[compress]",            Color = "#6D4C41" },
-            new() { Name = "[delta]",               Color = "#6D4C41" },
+            new() { Name = "[compress]",            Color = "#A1887F" },
+            new() { Name = "[delta]",               Color = "#A1887F" },
 
             // ── 控制台输出 — 琥珀色 ──
-            new() { Name = "[ Console ]",           Color = "#E65100" },
+            new() { Name = "[ Console ]",           Color = "#FFB74D" },
 
             // ── 速率/队列 — 橙色系 ──
-            new() { Name = "[rate-limit]",          Color = "#EF6C00" },
-            new() { Name = "[queue]",               Color = "#EF6C00" },
+            new() { Name = "[rate-limit]",          Color = "#FFB74D" },
+            new() { Name = "[queue]",               Color = "#FFB74D" },
 
-            // ── 总结/摘要 — 深蓝色 ──
-            new() { Name = "[summary]",             Color = "#283593" },
+            // ── 总结/摘要 — 蓝色系 ──
+            new() { Name = "[summary]",             Color = "#5C6BC0" },
 
-            // ── Windows 服务 — 深紫色 ──
-            new() { Name = "[win-svc]",             Color = "#4527A0" },
+            // ── Windows 服务 — 紫色系 ──
+            new() { Name = "[win-svc]",             Color = "#7E57C2" },
 
             // ── 启动 — 金色 ──
-            new() { Name = "[Snet]",                Color = "#F9A825" },
+            new() { Name = "[Snet]",                Color = "#FFD54F" },
         ];
 
         #endregion
