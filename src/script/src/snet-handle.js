@@ -845,7 +845,8 @@ export async function* chatCompletion(req) {
 
   try {
     const t0 = Date.now();
-    const logDone = !req._noLog && config.requestLog ? reqLog({ tag: req.clientTag, sessionId: req.sessionId, provider, model, thinking: thinkingTag, preview }) : null;
+    const meta = resolveModelMetadata(info.id);
+    const logDone = !req._noLog && config.requestLog ? reqLog({ tag: req.clientTag, sessionId: req.sessionId, provider, model, thinking: thinkingTag, preview, ctxLen: meta.context_length }) : null;
     const resp = await apiRequest("/chat/completions", body, { signal: ac?.signal, clientTag: req.clientTag });
 
     if (req.stream === false) {

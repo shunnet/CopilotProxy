@@ -268,7 +268,7 @@ function debug(msg) {
   if (_dashboard) _pushToBuffer(msg, true);
 }
 
-function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId }) {
+function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId, ctxLen }) {
   const tagPart = tag ? `[\x1b[35m${tag}\x1b[0m]` : "";
   const sessionPart = sessionId ? `\x1b[90m[ session ]\x1b[0m ( \x1b[36m${sessionId}\x1b[0m )` : "";
   const thinkPart = thinking ? `[\x1b[36m${thinking}\x1b[0m]` : "";
@@ -318,14 +318,14 @@ function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId })
 
   return (elapsed, usage) => {
     const tok = usage ? ` [request]${usage.prompt_tokens} [response]${usage.completion_tokens}` : "";
-    const msg = `${prefix}${tok}${trail} \x1b[32m→\x1b[0m [${elapsed}ms]`;
+    const pct = usage && ctxLen ? ` [${((usage.total_tokens / ctxLen) * 100).toFixed(2)}%]` : "";
+    const msg = `${prefix}${tok}${trail} \x1b[32m→\x1b[0m${pct} [${elapsed}ms]`;
     if (_dashboard) {
       _pushToBuffer(msg, false);
     } else if (_plainMode) {
-      // WPF plain mode: non-blocking write to prevent pipe stall
-      _plainLog(`${ts()} ${_strip(prefix)}${tok}${_strip(trail)} → [${elapsed}ms]\n`);
+      _plainLog(`${ts()} ${_strip(prefix)}${tok}${_strip(trail)} →${pct} [${elapsed}ms]\n`);
     } else {
-      process.stdout.write(`\r${initLine}${tok}\x1b[32m→\x1b[0m [${elapsed}ms]\n`);
+      process.stdout.write(`\r${initLine}${tok}\x1b[32m→\x1b[0m${pct} [${elapsed}ms]\n`);
     }
   };
 }
