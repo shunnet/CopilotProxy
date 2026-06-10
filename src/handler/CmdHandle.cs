@@ -16,11 +16,6 @@ public static partial class CmdHandle
     #region 核心执行方法
 
     /// <summary>
-    /// 默认命令执行超时（10 分钟），防止脚本卡死导致进程无法退出
-    /// </summary>
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(10);
-
-    /// <summary>
     /// 异步执行 CMD 脚本文件，实时回调每行输出
     /// </summary>
     /// <param name="scriptPath">脚本文件路径（.cmd / .bat）</param>
@@ -65,19 +60,17 @@ public static partial class CmdHandle
                 psi.Environment[kv.Key] = kv.Value;
         }
 
-        // 组合超时保护：调用方传入的令牌 + 默认 10 分钟超时
-        using var timeoutCts = new CancellationTokenSource(DefaultTimeout);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-        var ct = linkedCts.Token;
+        // 长运行服务去掉固定超时 — 否则 ReadLineAsync 10 分钟后被取消停止日志读取
+        var ct = cancellationToken;
 
         using var process = new Process { StartInfo = psi };
         process.Start();
         // 通知上层进程已启动，便于后续精准终止
         onProcessStarted?.Invoke(process);
 
-        // 并行读取 stdout 和 stderr，stderr 输出自动添加 [ Error ] 前缀
+        // 并行读取 stdout 和 stderr（plain 模式下日志走 stderr 避免单管道阻塞）
         var stdoutTask = ReadStreamAsync(process.StandardOutput, onOutput, ct);
-        var stderrTask = ReadStreamAsync(process.StandardError, line => onOutput("[ Error ] " + line), ct);
+        var stderrTask = ReadStreamAsync(process.StandardError, onOutput, ct);
 
         await Task.WhenAll(stdoutTask, stderrTask);
         await process.WaitForExitAsync(ct);

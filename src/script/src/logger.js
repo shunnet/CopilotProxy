@@ -6,6 +6,13 @@ let _plainMode = false;
 function setPlainMode(v) { _plainMode = v; }
 function _strip(s) { return _plainMode ? s.replace(/\x1b\[[0-9;]*m/g, "") : s; }
 
+// In WPF plain mode, write to stderr instead of stdout.
+// WPF reads stdout+stderr independently via two pipe readers — no single-pipe bottleneck.
+// stdout is kept silent in plain mode to avoid the 4KB pipe buffer blocking the event loop.
+function _plainLog(line) {
+  process.stderr.write(line, () => {});
+}
+
 let _bannerCollapsed = [];
 let _bannerExpanded = [];
 let _banner = [];
@@ -231,9 +238,9 @@ function log(msg) {
   if (_dashboard) {
     _pushToBuffer(msg, false);
   } else if (_plainMode) {
-    process.stdout.write(`${ts()} ${_strip(msg)}\n`);
+    _plainLog(`${ts()} ${_strip(msg)}\n`);
   } else {
-    process.stdout.write(`\x1b[90m${ts()}\x1b[0m ${msg}\n`);
+    process.stdout.write(`\x1b[90m${ts()}\x1b[0m ${msg}\n`, () => {});
   }
 }
 
@@ -254,7 +261,10 @@ function error(msg) {
 }
 
 function debug(msg) {
-  if (_debugOn()) process.stdout.write(`\x1b[90m${ts()}\x1b[0m ${msg}\n`);
+  if (_debugOn()) {
+    if (_plainMode) _plainLog(`${ts()} ${msg}\n`);
+    else process.stdout.write(`\x1b[90m${ts()}\x1b[0m ${msg}\n`, () => {});
+  }
   if (_dashboard) _pushToBuffer(msg, true);
 }
 
@@ -312,8 +322,8 @@ function reqLog({ tag, provider, model, preview, thinking, elapsed, sessionId })
     if (_dashboard) {
       _pushToBuffer(msg, false);
     } else if (_plainMode) {
-      // WPF plain mode: single clean line, no ANSI, no init line
-      process.stdout.write(`${ts()} ${_strip(prefix)}${tok}${_strip(trail)} → [${elapsed}ms]\n`);
+      // WPF plain mode: non-blocking write to prevent pipe stall
+      _plainLog(`${ts()} ${_strip(prefix)}${tok}${_strip(trail)} → [${elapsed}ms]\n`);
     } else {
       process.stdout.write(`\r${initLine}${tok}\x1b[32m→\x1b[0m [${elapsed}ms]\n`);
     }

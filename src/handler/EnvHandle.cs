@@ -50,7 +50,7 @@ public static class EnvHandle
         model.MiMoApiKey = GetString(envMap, "MIMO_API_KEY", "");
         model.RequestLog = GetBool(envMap, "REQUEST_LOG", true);
         model.Debug = GetBool(envMap, "DEBUG", false);
-        model.CompressionLevel = GetString(envMap, "COMPRESSION_LEVEL", "off");
+        model.CompressionLevel = GetString(envMap, "COMPRESSION_LEVEL", "caveman");
         model.ConcurrencyThinking = GetInt(envMap, "CONCURRENCY_THINKING", 5);
         model.ConcurrencyStandard = GetInt(envMap, "CONCURRENCY_STANDARD", 15);
         model.RetryMax = GetInt(envMap, "RETRY_MAX", 3);
@@ -60,9 +60,8 @@ public static class EnvHandle
         model.DefaultContextLength = GetInt(envMap, "DEFAULT_CONTEXT_LENGTH", 262144);
         model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", 0.5);
         model.SessionKeepaliveEnabled = GetBool(envMap, "SESSION_KEEPALIVE_ENABLED", true);
-        model.SessionKeepaliveIntervalMs = GetInt(envMap, "SESSION_KEEPALIVE_INTERVAL_MS", 120000);
-        model.SessionKeepaliveIdleTimeoutMs = GetInt(envMap, "SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", 600000);
-        model.SessionKeepaliveMaxLifetimeMs = GetInt(envMap, "SESSION_KEEPALIVE_MAX_LIFETIME_MS", 86400000);
+        model.SessionKeepaliveIntervalMs = GetInt(envMap, "SESSION_KEEPALIVE_INTERVAL_MS", 60000);
+        model.SessionKeepaliveIdleTimeoutMs = GetInt(envMap, "SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", 1800000);
         model.ServerHost = GetString(envMap, "SERVER_HOST", "127.0.0.1");
         model.MaxToolOutputChars = GetInt(envMap, "MAX_TOOL_OUTPUT_CHARS", 12000);
         model.SnetLanguage = GetString(envMap, "SNET_LANGUAGE", "zh");
@@ -148,7 +147,6 @@ public static class EnvHandle
             $"SESSION_KEEPALIVE_ENABLED={model.SessionKeepaliveEnabled.ToString().ToLower()}",
             $"SESSION_KEEPALIVE_INTERVAL_MS={model.SessionKeepaliveIntervalMs}",
             $"SESSION_KEEPALIVE_IDLE_TIMEOUT_MS={model.SessionKeepaliveIdleTimeoutMs}",
-            $"SESSION_KEEPALIVE_MAX_LIFETIME_MS={model.SessionKeepaliveMaxLifetimeMs}",
             "",
             "# --- Language (zh / en) ---",
             $"SNET_LANGUAGE={model.SnetLanguage}",

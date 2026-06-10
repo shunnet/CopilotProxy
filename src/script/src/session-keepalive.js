@@ -8,19 +8,16 @@ import { t } from "./i18n.js";
 //   - 每次真实请求完成后，保存压缩后的消息摘要（非完整消息）
 //   - 在 KEEPALIVE_INTERVAL_MS 空闲后，发送最小编译 ping (max_tokens:1)
 //     到上游 API，使用相同的对话前缀
-//   - 在 KEEPALIVE_IDLE_TIMEOUT_MS 总空闲后，停止 ping 并清理
-//   - 在 KEEPALIVE_MAX_LIFETIME_MS 后无条件停止
-//   - 定期清理孤立 session（防止内存泄漏）
+//   - 在 KEEPALIVE_IDLE_TIMEOUT_MS 连续空闲后，输出日志并停止心跳
 //   - 新的真实请求到来时重置空闲计时器
 
-import { chatCompletion, isDeepSeekModel, isMiMoModel } from "./snet-handle.js";
+import { isDeepSeekModel, isMiMoModel } from "./snet-handle.js";
 import { log } from "./logger.js";
 
 const _env = (k, d) => (typeof Bun !== "undefined" ? Bun.env[k] : typeof process !== "undefined" ? process.env[k] : undefined) ?? d;
 const KEEPALIVE_ENABLED = (_env("SESSION_KEEPALIVE_ENABLED", "true")) !== "false";
-const KEEPALIVE_INTERVAL_MS = Math.max(30000, parseInt(_env("SESSION_KEEPALIVE_INTERVAL_MS", "120000"), 10));
-const KEEPALIVE_IDLE_TIMEOUT_MS = Math.max(KEEPALIVE_INTERVAL_MS * 2, parseInt(_env("SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", "600000"), 10));
-const KEEPALIVE_MAX_LIFETIME_MS = Math.max(3600000, parseInt(_env("SESSION_KEEPALIVE_MAX_LIFETIME_MS", "86400000"), 10));
+const KEEPALIVE_INTERVAL_MS = Math.max(30000, parseInt(_env("SESSION_KEEPALIVE_INTERVAL_MS", "60000"), 10));
+const KEEPALIVE_IDLE_TIMEOUT_MS = Math.max(KEEPALIVE_INTERVAL_MS * 2, parseInt(_env("SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", "1800000"), 10));
 
 const _sessions = new Map();
 let _totalPings = 0;
@@ -35,7 +32,6 @@ function getProvider(model) {
 // 从消息数组提取最小 ping 上下文（仅前几条 user 消息，去重）
 function _pingMessages(messages) {
   if (!messages?.length) return [];
-  // 只取前 3 条 user/assistant 消息作为对话上下文
   const result = [];
   for (const m of messages) {
     if (result.length >= 4) break;
@@ -62,66 +58,15 @@ function scheduleKeepalive(sessionId) {
 
       const idleMs = Date.now() - e.lastActivity;
       if (idleMs >= KEEPALIVE_IDLE_TIMEOUT_MS) {
-        log(`${t("keepaliveIdle", sessionId, Math.round(idleMs / 1000), e.pingCount || 0)}`);
+        log(`\x1b[35m[${e.clientTag || "?"}]\x1b[0m > \x1b[90m[ session ]\x1b[0m ( \x1b[36m${sessionId}\x1b[0m ) \x1b[90m[ idle ]\x1b[0m → \x1b[0m${m} \x1b[90m(${Math.round(idleMs / 1000)}s, pings=${e.pingCount || 0})\x1b[0m`);
         clearInterval(entry._timer);
         _sessions.delete(sessionId);
         return;
       }
 
-      const ageMs = Date.now() - (e.createdAt || Date.now());
-      if (ageMs >= KEEPALIVE_MAX_LIFETIME_MS) {
-        log(`${t("keepaliveLifetime", sessionId, Math.round(ageMs / 3600000))}`);
-        clearInterval(entry._timer);
-        _sessions.delete(sessionId);
-        return;
-      }
-
-      doKeepalive(sessionId, entry).catch(err => log(`[keepalive] error: ${err.message}`));
-    } catch (ex) { log(`[keepalive] heartbeat error: ${ex.message}`); }
+    } catch (ex) { log(`[keepalive] heartbeat error: ${ex.message}\r\n`); }
   }, KEEPALIVE_INTERVAL_MS);
 }
-
-async function doKeepalive(sessionId, entry) {
-  if (!entry) return;
-
-  try {
-    const gen = chatCompletion({
-      model: entry.model,
-      messages: entry.pingMsgs,
-      stream: false,
-      tools: undefined,
-      options: { num_predict: 1 },
-      _noTimeout: true,
-      _noDefaults: true,
-      _noLog: true,
-    });
-
-    for await (const chunk of gen) {
-      if (chunk.done && chunk.done_reason !== "error") {
-        entry.pingCount = (entry.pingCount || 0) + 1;
-        _totalPings++;
-      }
-    }
-  } catch (e) {
-    log(`${t("keepalivePingFail", sessionId, e.message)}`);
-    if (entry._timer) clearInterval(entry._timer);
-    _sessions.delete(sessionId);
-  }
-}
-
-// 定期清理孤立 session（防止 timer 失败导致内存泄漏）
-const _cleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [sid, entry] of _sessions) {
-    const idleMs = now - entry.lastActivity;
-    if (idleMs > KEEPALIVE_IDLE_TIMEOUT_MS * 2) {
-      if (entry._timer) clearInterval(entry._timer);
-      _sessions.delete(sid);
-      log(`[keepalive] cleaned orphaned session ${sid} (idle ${Math.round(idleMs / 1000)}s)`);
-    }
-  }
-}, 300_000); // 每 5 分钟检查一次
-_cleanupTimer.unref?.();
 
 export function trackSession(sessionId, model, messages, clientTag) {
   if (!KEEPALIVE_ENABLED) return;
@@ -134,11 +79,10 @@ export function trackSession(sessionId, model, messages, clientTag) {
 
   _sessions.set(sessionId, {
     model,
-    pingMsgs,           // 压缩后的 ping 消息（仅前几条）
+    pingMsgs,
     clientTag,
     provider,
     lastActivity: Date.now(),
-    createdAt: existing?.createdAt || Date.now(),
     _timer: existing?._timer || null,
     pingCount: existing?.pingCount || 0,
   });
@@ -146,9 +90,17 @@ export function trackSession(sessionId, model, messages, clientTag) {
   scheduleKeepalive(sessionId);
 }
 
+// 手动停止指定会话
+export function stopSession(sessionId) {
+  const entry = _sessions.get(sessionId);
+  if (!entry) return false;
+  if (entry._timer) clearInterval(entry._timer);
+  _sessions.delete(sessionId);
+  return true;
+}
+
 export function shutdown() {
   let count = 0;
-  clearInterval(_cleanupTimer);
   for (const [sessionId, entry] of _sessions) {
     if (entry._timer) clearInterval(entry._timer);
     count++;
@@ -165,7 +117,6 @@ export function stats() {
     enabled: KEEPALIVE_ENABLED,
     intervalMs: KEEPALIVE_INTERVAL_MS,
     idleTimeoutMs: KEEPALIVE_IDLE_TIMEOUT_MS,
-    maxLifetimeMs: KEEPALIVE_MAX_LIFETIME_MS,
     totalPings: _totalPings,
   };
 }

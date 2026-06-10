@@ -26,7 +26,7 @@ CopilotProxy 是一个**本地代理服务**，在 GitHub Copilot 与国产大�
 
 **它解决什么问题？**
 
-GitHub Copilot 默认仅支持 OpenAI / Anthropic 等海外模型。对于国内用户，DeepSeek 和小米 MiMo 在中文代码理解、推理能力、成本方面具有明显优势，但 Copilot 无法直接连接。CopilotProxy 作为一个本地中间层，实现了协议转换、智能提示词压缩、会话管理、工具调用标准化、技能自动匹配等功能，让国产模型无缝接入 Copilot 生态。
+GitHub Copilot 默认仅支持 OpenAI / Anthropic 等海外模型。对于国内用户，DeepSeek 和小米 MiMo 在中文代码理解、推理能力、成本方面具有明显优势，但 Copilot 无法直接连接。CopilotProxy 作为一个本地中间层，实现了协议转换、智能提示词压缩、会话管理、工具调用标准化等功能，让国产模型无缝接入 Copilot 生态。
 
 **WPF 桌面管理工具**提供了可视化的一键操作界面——配置 API Key、构建部署、启动/停止/重启服务、查看实时日志，无需接触命令行。脚本服务端则负责实际的 API 转发、压缩、会话保活和并发控制。
 
@@ -39,7 +39,7 @@ GitHub Copilot 默认仅支持 OpenAI / Anthropic 等海外模型。对于国内
 <tr><td>🪟 <b>单实例 + 托盘</b></td><td>Mutex + NamedPipe 确保唯一实例，关闭到托盘，新启动唤醒已有窗口</td></tr>
 <tr><td>🔄 <b>Ollama 协议兼容</b></td><td>模拟 Ollama API，VS 2026 / VS Code 原生接入</td></tr>
 <tr><td>🧠 <b>自动推理</b></td><td>Pro 模型使用最大推理强度（更精准、较慢），Flash / 非 Pro 使用最低推理（响应最快）</td></tr>
-<tr><td>📦 <b>提示词压缩</b></td><td>9 级可选（off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard），默认关闭</td></tr>
+<tr><td>📦 <b>提示词压缩</b></td><td>9 级可选，默认 caveman（裁剪冗余修饰词，不影响代码理解）</td></tr>
 <tr><td>💬 <b>会话保活</b></td><td>自动维持 KV Cache，降低 API 费用，日志可见</td></tr>
 <tr><td>⚡ <b>高并发</b></td><td>推理模型 5 并发、标准模型 15 并发，大幅提升响应速度</td></tr>
 <tr><td>📊 <b>Token 用量</b></td><td>请求/响应 Token 合并到完成行，一目了然</td></tr>
@@ -117,6 +117,50 @@ npm run node       # Node.js 备选
 | 🎯 **MiMo V2.5** | 1M | ✅ | ❌ | ⚡ LOW（响应最快） |
 | 🎯 **MiMo V2.5 Pro** | 1M | ✅ | ❌ | 🧠 MAXIMUM（精准，较慢） |
 
+## ⚙️ 配置参数
+
+### 🔌 核心配置
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DEEPSEEK_API_KEY` | — | DeepSeek API Key |
+| `MIMO_API_KEY` | — | MiMo API Key |
+| `DEFAULT_MODEL` | `ds/deepseek-v4-pro` | 默认模型 |
+| `SERVER_HOST` | `127.0.0.1` | 绑定地址 |
+| `SERVER_PORT` | `11434` | 监听端口 |
+
+### ⚡ 压缩与性能
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `COMPRESSION_LEVEL` | `caveman` | 压缩级别 |
+| `CONCURRENCY_THINKING` | `5` | 推理模型最大并发 |
+| `CONCURRENCY_STANDARD` | `15` | 标准模型最大并发 |
+| `RETRY_MAX` | `3` | 429 错误重试次数 |
+| `THINKING_TIMEOUT_MS` | `300000` | 推理模型超时（毫秒） |
+| `REQUEST_TIMEOUT_MS` | `300000` | 请求超时（毫秒） |
+
+### 🧠 模型与上下文
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DEFAULT_CONTEXT_LENGTH` | `262144` | 默认上下文长度（Token） |
+| `DEFAULT_TEMPERATURE` | `0.5` | 采样温度（0-2） |
+
+### 💬 会话保活
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `SESSION_KEEPALIVE_ENABLED` | `true` | 会话保活开关 |
+| `SESSION_KEEPALIVE_INTERVAL_MS` | `60000` | 保活 Ping 间隔（毫秒，1分钟） |
+| `SESSION_KEEPALIVE_IDLE_TIMEOUT_MS` | `1800000` | 保活空闲超时（毫秒，30分钟） |
+
+### 🌍 语言
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `SNET_LANGUAGE` | `zh` | 界面语言（zh / en） |
+
 ## 🌐 API 端点
 
 | 端点 | 方法 | 说明 |
@@ -132,6 +176,7 @@ npm run node       # Node.js 备选
 | `/api/version` | GET | 服务版本 |
 | `/api/ps` | GET | 进程/模型状态 |
 | `/stop` | GET | 优雅关闭服务 |
+| `/api/session/stop` | POST | 手动关闭指定会话（`{"sessionId":"1"}`） |
 
 ## ⌨️ WPF 界面操作
 
@@ -214,7 +259,7 @@ CopilotProxy/
 │   │       ├── session-tracker.js # 会话注册 & 工作区摘要 & 速率限制
 │   │       ├── session-keepalive.js # 会话保活（KV Cache 维持）
 │   │       ├── logger.js          # 控制台仪表盘日志（滚动/折叠）
-│   │       ├── i18n.js            # 中英文国际化（156+ key）
+│   │       ├── i18n.js            # 中英文国际化（76 key）
 │   │       ├── deepseek-client.js # DeepSeek API 封装
 │   │       ├── mimo-client.js     # MiMo API 封装
 │   │       ├── win-service.js     # Windows 服务集成（bun:ffi + SCM）
@@ -226,7 +271,7 @@ CopilotProxy/
 ### 🌍 中英文国际化
 - WPF 切换语言 → 自动同步脚本服务（`POST /api/language`）
 - 启动时通过 `SNET_LANGUAGE` 环境变量预设语言
-- 默认中文，覆盖 70+ 个翻译 Key：服务状态、API 错误、保活、Token 日志、Windows 服务等
+- 默认中文，覆盖 76 个翻译 Key：服务状态、API 错误、保活、Token 日志、Windows 服务等
 
 ### 🧠 动态推理
 - Pro 模型（v4-pro / v4.5 / MiMo 2.5-pro）自动 HIGH 推理

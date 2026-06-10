@@ -1,4 +1,7 @@
 ﻿import "./polyfill.js";
+// ── Crash guards: catch unhandled errors so the process stays alive ──
+process.on("uncaughtException", (e) => { try { process.stderr.write(`[Snet] FATAL uncaughtException: ${e?.message || e}\r\n${e?.stack?.slice(0,500)}\r\n`); } catch {} });
+process.on("unhandledRejection", (reason) => { try { process.stderr.write(`[Snet] FATAL unhandledRejection: ${reason?.message || reason}\r\n`); } catch {} });
 const _isDebug = () => { const v = process.env.DEBUG; return v === "1" || v === "true" || v === "yes"; };
 if (_isDebug()) try { process.stderr.write(`[Snet] startup pid=${process.pid} argv=${JSON.stringify(process.argv)}\r\n`); } catch (e) { /* stderr may not be available early */ }
 
@@ -43,7 +46,7 @@ import { config, getModels, initModels, resolveModel, resolveModelMetadata, isKn
 
 import { ModelConcurrencyManager, RateLimitError, truncateToolMessagesInPayload, checkRequestBodySize } from "./concurrency.js";
 import { compactIdentity, compactToolInstructions, compactOllamaToolInstructions, compactCodeCompletionPrompt } from "./token-optimizer.js";
-import { trackSession, shutdown as keepaliveShutdown, stats as keepaliveStats } from "./session-keepalive.js";
+import { trackSession, stopSession, shutdown as keepaliveShutdown, stats as keepaliveStats } from "./session-keepalive.js";
 import { handleServiceCommand, runAsService } from "./win-service.js";
 import { log, error as logErr, debug, enableDashboard, disableDashboard, onCommand, collapseBanner, redrawBanner, setBoxWidth, setPlainMode } from "./logger.js";
 import { isDeepSeekAvailable } from "./deepseek-client.js";
@@ -119,7 +122,7 @@ REQUEST_LOG=true
 DEBUG=false
 
 # --- Compression (off/lite/caveman/rtk/ultra/delta/stacked/aggressive/standard) ---
-COMPRESSION_LEVEL=off
+COMPRESSION_LEVEL=caveman
 
 # --- Concurrency ---
 CONCURRENCY_THINKING=5
@@ -136,9 +139,8 @@ MESSAGES_PAGING=0
 
 # --- Session Keepalive ---
 SESSION_KEEPALIVE_ENABLED=true
-SESSION_KEEPALIVE_INTERVAL_MS=120000
-SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=600000
-SESSION_KEEPALIVE_MAX_LIFETIME_MS=86400000
+SESSION_KEEPALIVE_INTERVAL_MS=60000
+SESSION_KEEPALIVE_IDLE_TIMEOUT_MS=1800000
 
 # --- Language ---
 SNET_LANGUAGE=zh
@@ -2280,6 +2282,19 @@ app.post("/api/generate", async c => {
       await s.write(JSON.stringify({ model: body.model, created_at: new Date().toISOString(), response: `Error: ${e.message}`, done: true }) + "\n");
     }
   });
+});
+
+// ── Manual session stop ──
+app.post("/api/session/stop", async c => {
+  const body = await c.req.json().catch(() => ({}));
+  const sessionId = body.sessionId || body.session_id || body.id;
+  if (!sessionId) return c.json({ ok: false, error: "sessionId is required" }, 400);
+  const stopped = stopSession(String(sessionId));
+  if (stopped) {
+    log(t("serviceStopping"));
+    return c.json({ ok: true, sessionId: String(sessionId), status: "stopped" });
+  }
+  return c.json({ ok: false, sessionId: String(sessionId), status: "not_found" }, 404);
 });
 
 // ── Stop server ──

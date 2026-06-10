@@ -97,8 +97,8 @@ public class EnvConfigModel
     /// 提示词压缩级别，可选值：off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard
     /// 不同级别对应不同的压缩策略和 Token 节省率
     /// </summary>
-    [Description("提示词压缩级别：off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard（默认 off）")]
-    public string CompressionLevel { get; set; } = "off";
+    [Description("提示词压缩级别：off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard（默认 caveman）")]
+    public string CompressionLevel { get; set; } = "caveman";
 
     #endregion
 
@@ -184,23 +184,16 @@ public class EnvConfigModel
     /// <summary>
     /// 保活 Ping 间隔（毫秒），默认 120000（2 分钟）
     /// </summary>
-    [Description("保活间隔，毫秒（默认 120000）")]
+    [Description("保活间隔，毫秒（默认 60000）")]
     [Range(30000, int.MaxValue, ErrorMessage = "间隔必须 >= 30000ms")]
-    public int SessionKeepaliveIntervalMs { get; set; } = 120000;
+    public int SessionKeepaliveIntervalMs { get; set; } = 60000;
 
     /// <summary>
     /// 保活最大空闲时间（毫秒），超过此时间无请求则停止 Ping
     /// </summary>
     [Description("保活最大空闲时间，毫秒")]
     [Range(1000, int.MaxValue, ErrorMessage = "保活空闲时间必须 >= 1000ms")]
-    public int SessionKeepaliveIdleTimeoutMs { get; set; } = 600000;
-
-    /// <summary>
-    /// 保活最大生命周期（毫秒），默认 86400000（24 小时）
-    /// </summary>
-    [Description("保活最大生命周期，毫秒（默认 24h）")]
-    [Range(3600000, int.MaxValue, ErrorMessage = "生命周期必须 >= 1h")]
-    public int SessionKeepaliveMaxLifetimeMs { get; set; } = 86400000;
+    public int SessionKeepaliveIdleTimeoutMs { get; set; } = 1800000;
 
     #endregion
 

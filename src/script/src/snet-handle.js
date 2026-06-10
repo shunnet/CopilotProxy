@@ -146,7 +146,7 @@ const config = {
     return v === undefined ? true : v === "true" || v === "1";
   },
   get compressionLevel() {
-    return Bun.env.COMPRESSION_LEVEL ?? "off";
+    return Bun.env.COMPRESSION_LEVEL ?? "caveman";
   },
   get forceAllCapabilities() {
     return (Bun.env.FORCE_ALL_CAPABILITIES ?? "true") !== "false";
@@ -162,14 +162,14 @@ const config = {
     return v === undefined ? true : v === "true" || v === "1";
   },
   get sessionKeepaliveIntervalMs() {
-    return Math.max(30000, parseInt(Bun.env.SESSION_KEEPALIVE_INTERVAL_MS || "120000", 10));
+    return Math.max(30000, parseInt(Bun.env.SESSION_KEEPALIVE_INTERVAL_MS || "60000", 10));
   },
   get sessionKeepaliveIdleTimeoutMs() {
     const interval = this.sessionKeepaliveIntervalMs;
-    return Math.max(interval * 2, parseInt(Bun.env.SESSION_KEEPALIVE_IDLE_TIMEOUT_MS || "600000", 10));
+    return Math.max(interval * 2, parseInt(Bun.env.SESSION_KEEPALIVE_IDLE_TIMEOUT_MS || "1800000", 10));
   },
   get sessionKeepaliveMaxLifetimeMs() {
-    return Math.max(3600000, parseInt(Bun.env.SESSION_KEEPALIVE_MAX_LIFETIME_MS || "86400000", 10));
+    return Math.max(3600000, parseInt(Bun.env.SESSION_KEEPALIVE_MAX_LIFETIME_MS || "28800000", 10));
   },
   get messagesPaging() {
     const v = parseInt(Bun.env.MESSAGES_PAGING, 10);

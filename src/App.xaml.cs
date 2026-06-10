@@ -163,14 +163,17 @@ namespace Snet.CopilotProxy
         #region 应用生命周期事件
 
         /// <summary>
-        /// 应用退出时：先通过 HTTP /stop 通知代理服务优雅关闭，再释放 DI 容器
+        /// 应用退出时：HTTP /stop 优雅关闭 → 等待0.5s → 强制杀进程
         /// </summary>
         private async void OnExit(object sender, ExitEventArgs e)
         {
             _singleInstance?.Dispose();
-            await StopServiceAsync();
+            await StopServiceAsync();        // HTTP /stop (JS graceful shutdown)
+            _mainModel?.Shutdown();           // Cancel CTS + kill running process
             InjectionWpf.ClearService();
         }
+
+        private MainWindowModel? _mainModel;
 
         /// <summary>
         /// 应用启动时：清理残留服务 → 注入参数设置控件 → 注册全局异常捕获 → 打开主窗口
@@ -196,6 +199,7 @@ namespace Snet.CopilotProxy
 
             // 打开主窗口
             MainWindow window = InjectionWpf.Window<MainWindow, MainWindowModel>(true);
+            _mainModel = window.DataContext as MainWindowModel;
             window.Show();
 
             // Show() 之后窗口的 HWND 才真正创建，注册后启动管道监听
@@ -399,11 +403,9 @@ namespace Snet.CopilotProxy
                 var port = GetServicePort();
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
                 await http.GetAsync($"http://127.0.0.1:{port}/stop");
+                await Task.Delay(500);
             }
-            catch (Exception ex)
-            {
-                LogHelper.Error(string.Format(App.LanguageOperate.GetLanguageValue("Error_StopServiceFailed"), ex.Message), "Snet.CopilotProxy.log", ex);
-            }
+            catch { }
         }
 
         #endregion

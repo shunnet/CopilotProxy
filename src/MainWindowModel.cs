@@ -383,6 +383,14 @@ namespace Snet.CopilotProxy
         public IAsyncRelayCommand Stop => p_Stop ??= new AsyncRelayCommand(StopAsync);
         private IAsyncRelayCommand? p_Stop;
 
+        /// <summary>Exit-time shutdown: cancel CTS + kill process, no UI msgs</summary>
+        public void Shutdown()
+        {
+            _buildCts?.Cancel();
+            _startCts?.Cancel();
+            KillRunningProcess();
+        }
+
         public async Task StopAsync()
         {
             _buildCts?.Cancel();
