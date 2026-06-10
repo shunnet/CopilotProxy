@@ -106,6 +106,7 @@ namespace Snet.CopilotProxy
             new() { Name = "Exception",             Color = "#EF5350" },
             new() { Name = "[FATAL]",               Color = "#EF5350" },
             new() { Name = "FALSE",                 Color = "#EF5350" },
+            new() { Name = "[ idle ]",              Color = "#EF5350" },
 
             // ── API/网络错误 — 暗红色 ──
             new() { Name = "[chat]",                Color = "#E53935" },
