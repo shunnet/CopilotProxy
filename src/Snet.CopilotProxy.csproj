@@ -9,7 +9,7 @@
 		<ApplicationIcon>icon.ico</ApplicationIcon>
 		<Company>Shunnet.top</Company>
 		<Product>CopilotProxy</Product>
-		<Version>1.0.1.1</Version>
+		<Version>1.0.1.2</Version>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
@@ -24,7 +24,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Snet.Windows.Controls" Version="26.155.1" />
+		<PackageReference Include="Snet.Windows.Controls" Version="26.167.1" />
 	</ItemGroup>
 
 	<ItemGroup>

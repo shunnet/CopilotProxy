@@ -166,9 +166,9 @@ public class EnvConfigModel
     /// <summary>
     /// 默认模型温度（0-2），留空表示不设置，由 API 自行决定
     /// </summary>
-    [Description("默认温度（0-2，默认 0.5）")]
+    [Description("默认温度（0-2，默认空）")]
     [Range(0, 2, ErrorMessage = "温度必须在 0-2 之间")]
-    public double? DefaultTemperature { get; set; } = 0.5;
+    public double? DefaultTemperature { get; set; }
 
     #endregion
 

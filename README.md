@@ -145,7 +145,6 @@ npm run node       # Node.js 备选
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `DEFAULT_CONTEXT_LENGTH` | `262144` | 默认上下文长度（Token） |
-| `DEFAULT_TEMPERATURE` | `0.5` | 采样温度（0-2） |
 
 ### 💬 会话保活
 

@@ -122,7 +122,8 @@ namespace Snet.CopilotProxy.handler
 
             // Task.Factory.StartNew 传入 async 方法会产生 Task<Task>，内层 Task 被丢弃。
             // 使用 Task.Run 可正确展开异步方法返回的 Task。
-            _listenerTask = Task.Run(PipeListenerLoop, _cts.Token).ContinueWith(t => {
+            _listenerTask = Task.Run(PipeListenerLoop, _cts.Token).ContinueWith(t =>
+            {
                 if (t.IsFaulted && t.Exception != null)
                     System.Diagnostics.Trace.WriteLine($"Pipe listener faulted: {t.Exception.InnerException?.Message}");
             }, TaskContinuationOptions.OnlyOnFaulted);

@@ -58,7 +58,7 @@ public static class EnvHandle
         model.ThinkingTimeoutMs = GetInt(envMap, "THINKING_TIMEOUT_MS", 300000);
         model.RequestTimeoutMs = GetInt(envMap, "REQUEST_TIMEOUT_MS", 300000);
         model.DefaultContextLength = GetInt(envMap, "DEFAULT_CONTEXT_LENGTH", 262144);
-        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", 0.5);
+        model.DefaultTemperature = GetDouble(envMap, "DEFAULT_TEMPERATURE", null);
         model.SessionKeepaliveEnabled = GetBool(envMap, "SESSION_KEEPALIVE_ENABLED", true);
         model.SessionKeepaliveIntervalMs = GetInt(envMap, "SESSION_KEEPALIVE_INTERVAL_MS", 60000);
         model.SessionKeepaliveIdleTimeoutMs = GetInt(envMap, "SESSION_KEEPALIVE_IDLE_TIMEOUT_MS", 1800000);
