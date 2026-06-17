@@ -184,8 +184,8 @@ export function createReasoningContext(messages, model, workspaceRoot, clientTag
   const prefixedConv = (key) => `c:${conv}:${key}`;
   const prefixedWs = wsKey ? (key) => `w:${wsKey}:${key}` : null;
 
-  const tagPrefix = `\x1b[35m${clientTag}\x1b[0m`;
-  const sessionPrefix = `${tagPrefix}[\x1b[36m${sessionEntry.id}\x1b[0m]`;
+  const tagPrefix = `[\x1b[35m${clientTag}\x1b[0m]`;
+  const sessionPrefix = `${tagPrefix} > [\x1b[36m${sessionEntry.id}\x1b[0m]`;
 
   function seslog(msg) {
     log(`${sessionPrefix} ${msg}`);

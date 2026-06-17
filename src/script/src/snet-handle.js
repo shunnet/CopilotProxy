@@ -146,7 +146,7 @@ const config = {
     return v === undefined ? true : v === "true" || v === "1";
   },
   get compressionLevel() {
-    return Bun.env.COMPRESSION_LEVEL ?? "caveman";
+    return Bun.env.COMPRESSION_LEVEL ?? "off";
   },
   get forceAllCapabilities() {
     return (Bun.env.FORCE_ALL_CAPABILITIES ?? "true") !== "false";
@@ -155,7 +155,7 @@ const config = {
     return Number(Bun.env.DEFAULT_CONTEXT_LENGTH ?? "262144");
   },
   get maxRetries() {
-    return Math.max(0, parseInt(Bun.env.RETRY_MAX || "3", 10));
+    return Math.max(0, parseInt(Bun.env.RETRY_MAX || "6", 10));
   },
   get sessionKeepaliveEnabled() {
     const v = Bun.env.SESSION_KEEPALIVE_ENABLED;
@@ -570,7 +570,6 @@ async function apiRequest(endpoint, body, opts = {}) {
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "");
-    error(`[${provider}] ${resp.status}`);
 
     let upstreamMsg = t("apiError");
     let code = ERROR_CODES[resp.status] || "api_error";
@@ -590,16 +589,24 @@ async function apiRequest(endpoint, body, opts = {}) {
 
     if (resp.status === 429 && retries < maxRetries) {
       const delay = Math.min(5000 * Math.pow(2, retries), 60000);
-      if (config.requestLog) log(`[model] 429 retry ${retries + 1}/${maxRetries} in ${delay}ms`);
+      if (config.requestLog && opts._logMeta) {
+        const lm = opts._logMeta;
+        const m = (body.model || "").replace(/^(ds|mimo)\//, "").replace(/:latest$/, "");
+        log(`\x1b[35m[${lm.clientTag}]\x1b[0m > \x1b[90m[ session ]\x1b[0m ( \x1b[36m${lm.sessionId}\x1b[0m ) [${provider}/${m}] \x1b[31m[error]\x1b[0m [429] retry ${retries + 1}/${maxRetries} in ${delay}ms`);
+      }
       await new Promise(r => setTimeout(r, delay));
-      return apiRequest(endpoint, body, { ...opts, retries: retries + 1 });
+      return apiRequest(endpoint, body, { ...opts, retries: retries + 1, _logMeta: opts._logMeta });
     }
 
     if ((resp.status === 502 || resp.status === 503 || resp.status === 504) && retries < maxRetries) {
       const delay = Math.min(1000 * Math.pow(2, retries) + Math.random() * 1000, 30000);
-      if (config.requestLog) log(`[model] ${resp.status} retry ${retries + 1}/${maxRetries} in ${Math.round(delay)}ms`);
+      if (config.requestLog && opts._logMeta) {
+        const lm = opts._logMeta;
+        const m = (body.model || "").replace(/^(ds|mimo)\//, "").replace(/:latest$/, "");
+        log(`\x1b[35m[${lm.clientTag}]\x1b[0m > \x1b[90m[ session ]\x1b[0m ( \x1b[36m${lm.sessionId}\x1b[0m ) [${provider}/${m}] \x1b[31m[error]\x1b[0m [${resp.status}] retry ${retries + 1}/${maxRetries} in ${Math.round(delay)}ms`);
+      }
       await new Promise(r => setTimeout(r, delay));
-      return apiRequest(endpoint, body, { ...opts, retries: retries + 1 });
+      return apiRequest(endpoint, body, { ...opts, retries: retries + 1, _logMeta: opts._logMeta });
     }
 
     throw new APIError(mappedStatus, txt, upstreamMsg);
@@ -847,7 +854,7 @@ export async function* chatCompletion(req) {
     const t0 = Date.now();
     const meta = resolveModelMetadata(info.id);
     const logDone = !req._noLog && config.requestLog ? reqLog({ tag: req.clientTag, sessionId: req.sessionId, provider, model, thinking: thinkingTag, preview, ctxLen: meta.context_length }) : null;
-    const resp = await apiRequest("/chat/completions", body, { signal: ac?.signal, clientTag: req.clientTag });
+    const resp = await apiRequest("/chat/completions", body, { signal: ac?.signal, clientTag: req.clientTag, _logMeta: req.clientTag ? { clientTag: req.clientTag, sessionId: req.sessionId } : null });
 
     if (req.stream === false) {
       const data = await resp.json();

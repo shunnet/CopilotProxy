@@ -39,7 +39,7 @@ GitHub Copilot 默认仅支持 OpenAI / Anthropic 等海外模型。对于国内
 <tr><td>🪟 <b>单实例 + 托盘</b></td><td>Mutex + NamedPipe 确保唯一实例，关闭到托盘，新启动唤醒已有窗口</td></tr>
 <tr><td>🔄 <b>Ollama 协议兼容</b></td><td>模拟 Ollama API，VS 2026 / VS Code 原生接入</td></tr>
 <tr><td>🧠 <b>自动推理</b></td><td>Pro 模型使用最大推理强度（更精准、较慢），Flash / 非 Pro 使用最低推理（响应最快）</td></tr>
-<tr><td>📦 <b>提示词压缩</b></td><td>9 级可选，默认 caveman（裁剪冗余修饰词，不影响代码理解）</td></tr>
+<tr><td>📦 <b>提示词压缩</b></td><td>9 级可选（off / lite / caveman / rtk / ultra / delta / stacked / aggressive / standard），默认关闭</td></tr>
 <tr><td>💬 <b>会话保活</b></td><td>自动维持 KV Cache，降低 API 费用，日志可见</td></tr>
 <tr><td>⚡ <b>高并发</b></td><td>推理模型 5 并发、标准模型 15 并发，大幅提升响应速度</td></tr>
 <tr><td>📊 <b>Token 用量</b></td><td>请求/响应 Token 合并到完成行，一目了然</td></tr>
@@ -133,10 +133,10 @@ npm run node       # Node.js 备选
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `COMPRESSION_LEVEL` | `caveman` | 压缩级别 |
+| `COMPRESSION_LEVEL` | `off` | 压缩级别 |
 | `CONCURRENCY_THINKING` | `5` | 推理模型最大并发 |
 | `CONCURRENCY_STANDARD` | `15` | 标准模型最大并发 |
-| `RETRY_MAX` | `3` | 429 错误重试次数 |
+| `RETRY_MAX` | `6` | 429 错误重试次数 |
 | `THINKING_TIMEOUT_MS` | `300000` | 推理模型超时（毫秒） |
 | `REQUEST_TIMEOUT_MS` | `300000` | 请求超时（毫秒） |
 

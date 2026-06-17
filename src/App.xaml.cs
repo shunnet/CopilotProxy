@@ -79,6 +79,7 @@ namespace Snet.CopilotProxy
             // ── Token 用量 — 绿色系 ──
             new() { Name = "[request]",              Color = "#81C784" },
             new() { Name = "[response]",             Color = "#66BB6A" },
+            new() { Name = "[token]",                Color = "#81C784" },
 
             // ── 成功/状态 — 绿色系 ──
             new() { Name = "[ Info ]",              Color = "#81C784" },
@@ -101,16 +102,18 @@ namespace Snet.CopilotProxy
             // ── 错误/失败 — 红色系 ──
             new() { Name = "[ Error ]",             Color = "#EF5350" },
             new() { Name = "Error",                 Color = "#EF5350" },
+            new() { Name = "[error]",               Color = "#EF5350" },
             new() { Name = "错误",                  Color = "#EF5350" },
             new() { Name = "异常",                  Color = "#EF5350" },
             new() { Name = "Exception",             Color = "#EF5350" },
             new() { Name = "[FATAL]",               Color = "#EF5350" },
             new() { Name = "FALSE",                 Color = "#EF5350" },
-            new() { Name = "[ idle ]",              Color = "#EF5350" },
 
             // ── API/网络错误 — 暗红色 ──
             new() { Name = "[chat]",                Color = "#E53935" },
+            new() { Name = "[400]",                 Color = "#E53935" },
             new() { Name = "[404]",                 Color = "#E53935" },
+            new() { Name = "[429]",                 Color = "#E53935" },
 
             // ── 会话/保活 — 蓝色系 ──
             new() { Name = "[ session ]",           Color = "#42A5F5" },
@@ -148,12 +151,18 @@ namespace Snet.CopilotProxy
             // ── 速率/队列 — 橙色系 ──
             new() { Name = "[rate-limit]",          Color = "#FFB74D" },
             new() { Name = "[queue]",               Color = "#FFB74D" },
+            new() { Name = "[port]",                Color = "#FFB74D" },
+
+            // ── 自动控制 — 橙色系 ──
+            new() { Name = "[autopilot]",           Color = "#FFB74D" },
+            new() { Name = "[ idle ]",              Color = "#FFB74D" },
 
             // ── 总结/摘要 — 蓝色系 ──
             new() { Name = "[summary]",             Color = "#5C6BC0" },
 
             // ── Windows 服务 — 紫色系 ──
             new() { Name = "[win-svc]",             Color = "#7E57C2" },
+            new() { Name = "[winsvc]",              Color = "#7E57C2" },
 
             // ── 启动 — 金色 ──
             new() { Name = "[Snet]",                Color = "#FFD54F" },

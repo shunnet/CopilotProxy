@@ -19,7 +19,7 @@ function getConfig() {
   _configCache.value = {
     thinkingConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_THINKING || "5", 10)),
     standardConcurrency: Math.max(1, parseInt(Bun.env.CONCURRENCY_STANDARD || "15", 10)),
-    maxRetries: Math.max(0, parseInt(Bun.env.RETRY_MAX || "3", 10)),
+    maxRetries: Math.max(0, parseInt(Bun.env.RETRY_MAX || "6", 10)),
     retryBaseDelayMs: Math.max(50, parseInt(Bun.env.RETRY_BASE_DELAY_MS || "100", 10)),
     thinkingTimeoutMs: Math.max(10000, parseInt(Bun.env.THINKING_TIMEOUT_MS || "300000", 10)),
     requestTimeoutMs: Math.max(10000, parseInt(Bun.env.REQUEST_TIMEOUT_MS || "300000", 10)),
