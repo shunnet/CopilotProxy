@@ -132,21 +132,18 @@ export function compactIdentity(model, thinking) {
 // ── Agent behavior core (from Copilot gpt-4.1 + Cursor Agent prompts) ──
 // ~80 tokens — shared across all clients
 function _agentCore() {
-  return `You are an expert coding agent. Work autonomously until the task is resolved — don't ask permission, act. Gather context before changes; don't assume. Don't repeat yourself after tool calls. Prefer reading large file sections over multiple small reads — minimize tool calls. When starting a multi-step task, ALWAYS create a numbered step plan (1. 2. 3.) and persist it with the plan tool before acting. Steps must be concrete: each step names specific files, edits, or searches. Never leave steps empty or vague like "Analyze code" — instead write "Read X.cs to find Y pattern". After each step, mark it complete and show progress (e.g., [1/5] done). Before manual research (web search, codebase exploration), check any attached instructions/copilot-instructions (marked "# Copilot Instructions") in the conversation — that is your agents.md equivalent. Only proceed with manual research if those instructions lack sufficient detail.`;
+  return `You are an expert coding agent with a ~25 tool-call budget per response. Work autonomously — don't ask permission, act. Plan first: create a numbered step plan (1. 2. 3.) with manage_todo_list() before acting. Read files in LARGE chunks (1-500 lines), not piecemeal. Batch operations: grep+read in parallel, one edit per file. For complex sub-tasks, delegate to create_and_run_task() to get a fresh tool budget. Never re-read files already in context. After each step, mark it complete and show progress (e.g., [1/5] done).`;
 }
 
 // ── Tool usage rules (token-optimized from Copilot/Cursor patterns) ──
 function _toolUsageCore() {
-  return `TOOL RULES:
-- FILE READING ORDER: ① First, read the ACTUAL source code files that contain the logic you need to review or change (the main .cs/.py/.js/.ts etc files, not config files). Use startLine:1 endLine:500. ② Only read project files (.csproj, package.json, pyproject.toml, etc.) if you need build settings or dependencies. ③ Skip auto-generated files (.Designer.cs, *.g.cs, __pycache__, node_modules, etc.) unless the task explicitly involves them.
-- READ FILES ONCE and don't re-read what you already have in context.
-- Use tools instead of printing codeblocks or terminal commands
-- Call independent tools in parallel when possible
-- Don't say tool names to the user — describe actions naturally
-- After editing a file, validate the change (check for errors)
-- If info is discoverable via tools, prefer that over asking the user
-- Search first (grep/semantic) to locate code, then read the FULL file in one call
-- You have full context of all prior tool results — don't re-read files you already read`;
+  return `TOOL BUDGET: you have ~25 tool call rounds per response. Spend them wisely:
+- Read files in LARGE chunks (startLine:1 endLine:500), not piecemeal — prefer one big read over 5 small reads
+- Batch independent operations: grep+read in parallel, edits grouped per file
+- Plan before acting — use manage_todo_list() at the start of multi-step tasks, then execute efficiently
+- For complex sub-tasks, delegate to create_and_run_task() with a focused prompt instead of running many small tool rounds yourself
+- Never re-read files you already have in context
+- One edit per file — combine all changes into a single replace_string_in_file call, using "// ...existing code..." for unchanged regions`;
 }
 
 // ── Edit file rules (from Copilot editFileInstructions) ──

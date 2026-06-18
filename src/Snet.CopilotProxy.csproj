@@ -9,7 +9,7 @@
 		<ApplicationIcon>icon.ico</ApplicationIcon>
 		<Company>Shunnet.top</Company>
 		<Product>CopilotProxy</Product>
-		<Version>1.0.1.3</Version>
+		<Version>1.0.1.4</Version>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>

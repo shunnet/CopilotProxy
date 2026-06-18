@@ -1016,7 +1016,11 @@ app.post("/v1/chat/completions", async c => {
   // immediately so VS stops retrying.
   const rlEntry = _rateLimitedSessions.get(reasoningCtx.conv);
   if (rlEntry && Date.now() - rlEntry.at < 30000) {
-    reasoningCtx.seslog(`[rate-limit] session throttled, returning 429`);
+    // Log once per 5s to avoid flooding when VS retries aggressively
+    if (reasoningCtx.sessionEntry && Date.now() - (reasoningCtx.sessionEntry._lastRlLog || 0) > 5000) {
+      reasoningCtx.sessionEntry._lastRlLog = Date.now();
+      reasoningCtx.seslog(`[rate-limit] session throttled, returning 429`);
+    }
     const errResp = apiErr(new APIError(429, "", "Rate limit exceeded for this session."));
     return c.json(errResp.body, errResp.status);
   }
