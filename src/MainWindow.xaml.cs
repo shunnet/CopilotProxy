@@ -17,7 +17,7 @@ namespace Snet.CopilotProxy
         public MainWindow()
         {
             InitializeComponent();
-            _ = new EditHandler(edit, App.EditModels, color: ("#414141", "#FFFFFF"));
+            _ = new EditHandler(edit, App.EditModels, color: ("#414141", "#FEFEFE"));
         }
 
         /// <summary>
