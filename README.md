@@ -340,11 +340,11 @@ C# 管理工具启动脚本时自动传入 `--plain` 参数与 `SNET_PLAIN=1` �
 
 ## 📈 Star History
 
-<a href="https://www.star-history.com/?repos=shunnet%2FCopilotProxy&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=shunnet%2FCopilotProxy&type=date&legend=bottom-right">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&theme=dark&legend=bottom-right&sealed_token=ZQC0RY6zyRJsrkkEanQjkuKXJ2ytnybHWVZ24vrizx6s6hxE3BqB9VPt6TeGPoHyRacFqNTlMvVBm_ccm8JuJr_CY9twzEBCy-cAhwzlER3XzSDO1BJvxA" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&legend=bottom-right&sealed_token=ZQC0RY6zyRJsrkkEanQjkuKXJ2ytnybHWVZ24vrizx6s6hxE3BqB9VPt6TeGPoHyRacFqNTlMvVBm_ccm8JuJr_CY9twzEBCy-cAhwzlER3XzSDO1BJvxA" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=shunnet/CopilotProxy&type=date&legend=bottom-right&sealed_token=ZQC0RY6zyRJsrkkEanQjkuKXJ2ytnybHWVZ24vrizx6s6hxE3BqB9VPt6TeGPoHyRacFqNTlMvVBm_ccm8JuJr_CY9twzEBCy-cAhwzlER3XzSDO1BJvxA" />
  </picture>
 </a>
 
