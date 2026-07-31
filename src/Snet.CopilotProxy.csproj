@@ -24,7 +24,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Snet.Windows.Controls" Version="26.210.1" />
+		<PackageReference Include="Snet.Windows.Controls" Version="26.212.1" />
 	</ItemGroup>
 
 	<ItemGroup>
