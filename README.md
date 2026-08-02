@@ -1,5 +1,5 @@
-<h1 align="center">
-  <img width="120" height="120" src="https://api.shunnet.top/pic/nuget.png" alt="Snet Logo"/><br/>
+﻿<h1 align="center">
+  <img width="120" height="120" src="https://api.snet.cn/pic/nuget.png" alt="Snet Logo"/><br/>
   📦 CopilotProxy
 </h1>
 
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://shunnet.top"><b>🌐 官方网站</b></a> ·
+  <a href="https://snet.cn"><b>🌐 官方网站</b></a> ·
   <a href="https://www.nuget.org/profiles/shun"><b>📚 NuGet</b></a> ·
   <a href="https://github.com/shunnet"><b>💻 GitHub</b></a>
 </p>
@@ -349,5 +349,5 @@ C# 管理工具启动脚本时自动传入 `--plain` 参数与 `SNET_PLAIN=1` �
 </a>
 
 <p align="center">
-  <sub>Made with ❤️ by <a href="https://shunnet.top">Shunnet.top</a></sub>
+  <sub>Made with ❤️ by <a href="https://snet.cn">Snet.cn</a></sub>
 </p>

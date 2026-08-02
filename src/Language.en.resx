@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
@@ -59,7 +59,7 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <data name="SystemTitle" xml:space="preserve">
-    <value>[ Shunnet.top ] Copilot Model Proxy Tool</value>
+    <value>[ Snet.cn ] Copilot Model Proxy Tool</value>
   </data>
   <data name="支持 Visual Studio2026 与 Visual Studio Code" xml:space="preserve">
     <value>Supports Visual Studio 2026 and Visual Studio Code</value>
@@ -86,7 +86,7 @@
     <value>Operations</value>
   </data>
   <data name="Welcome" xml:space="preserve">
-    <value>Welcome to [ Shunnet.top ] Copilot Model Proxy Tool</value>
+    <value>Welcome to [ Snet.cn ] Copilot Model Proxy Tool</value>
   </data>
   <data name="Error_InitFailed" xml:space="preserve">
     <value>[ Error ] Initialization failed: {0}</value>

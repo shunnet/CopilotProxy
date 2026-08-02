@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Snet.CopilotProxy.handler;
 using Snet.Core.handler;
 using Snet.Log;
@@ -96,8 +96,8 @@ namespace Snet.CopilotProxy
             new() { Name = "deepseek",              Color = "#29B6F6" },
             new() { Name = "MiMo",                  Color = "#26C6DA" },
             new() { Name = "mimo",                  Color = "#26C6DA" },
-            new() { Name = "[ Shunnet.top ]",       Color = "#42A5F5" },
-            new() { Name = "[Shunnet.top]",         Color = "#42A5F5" },
+            new() { Name = "[ Snet.cn ]",       Color = "#42A5F5" },
+            new() { Name = "[Snet.cn]",         Color = "#42A5F5" },
 
             // ── 错误/失败 — 红色系 ──
             new() { Name = "[ Error ]",             Color = "#EF5350" },

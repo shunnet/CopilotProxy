@@ -349,7 +349,7 @@ namespace Snet.CopilotProxy {
         }
         
         /// <summary>
-        ///   查找类似 [ Shunnet.top ] Copilot 模型代理工具 的本地化字符串。
+        ///   查找类似 [ Snet.cn ] Copilot 模型代理工具 的本地化字符串。
         /// </summary>
         internal static string SystemTitle {
             get {
@@ -367,7 +367,7 @@ namespace Snet.CopilotProxy {
         }
         
         /// <summary>
-        ///   查找类似 欢迎使用 [ Shunnet.top ] Copilot 模型代理工具 的本地化字符串。
+        ///   查找类似 欢迎使用 [ Snet.cn ] Copilot 模型代理工具 的本地化字符串。
         /// </summary>
         internal static string Welcome {
             get {

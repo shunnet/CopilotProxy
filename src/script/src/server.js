@@ -2488,7 +2488,7 @@ let _bannerLines = [];
 const P = (s) => { _bannerLines.push(s); };
 
 P(W + "┌" + hr + W + "┐" + R);                                            // ┌───┐
-P(line("[ Shunnet.top ] Copilot Proxy" + R));
+P(line("[ Snet.cn ] Copilot Proxy" + R));
 const portLabel = port === 11434 ? `port: ${port} (default)` : `port: ${port}`;
 P(line(S + portLabel + "  |  built " + C + _buildDate + R + S + "  |  models.dev" + R));
 
@@ -2525,7 +2525,7 @@ P(W + "\u2514" + hr + W + "\u2518" + R);                                        
 // Print banner once (accumulated above) — avoids double-print from P() + _redraw()
 const _isTTY = !!(process.stdout.isTTY ?? process.stdin.isTTY);
 if (_isPlainMode) {
-  log(`[Shunnet.top] Copilot Proxy  |  port: ${port}  |  models.dev`);
+  log(`[Snet.cn] Copilot Proxy  |  port: ${port}  |  models.dev`);
   if (hasDS) log(`DeepSeek (${dsModels.length}): ${dsModels.map(m => m.name).join(", ")}`);
   if (hasMiMo) log(`MiMo (${mimoModels.length}): ${mimoModels.map(m => m.name).join(", ")}`);
 } else if (_isTTY) {
